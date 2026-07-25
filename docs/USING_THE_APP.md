@@ -27,10 +27,10 @@ Enter a name, identifier, and at least one endpoint URL. URLs must use `http://`
 
 After saving, use **Test OpenAI** or **Test Anthropic**. A successful model query makes the advertised models available for routes using that exact destination and protocol. Manual model entry always remains available.
 
-Example Devin Bridge destination:
+Example LLM Gateway destination:
 
 ```text
-Name: Devin Bridge
+Name: LLM Gateway
 OpenAI Responses URL: http://127.0.0.1:4317/openai/v1
 Anthropic Messages URL: http://127.0.0.1:4317/claude
 ```

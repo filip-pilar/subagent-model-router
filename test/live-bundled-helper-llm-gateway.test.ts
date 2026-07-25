@@ -6,11 +6,11 @@ import { describe, expect, it } from "vitest";
 import { defaultConfig, saveConfig } from "../src/config.js";
 import { temporaryRoot, writeJson } from "./helpers.js";
 
-const BRIDGE_CLAUDE = process.env.HMR_DEVIN_CLAUDE_URL ?? "http://127.0.0.1:4317/claude";
-const ENTITLED_MODEL = process.env.HMR_DEVIN_MODEL ?? "swe-1-6-slow";
-const live = process.env.HMR_LIVE_BUNDLED_HELPER_DEVIN === "1";
+const GATEWAY_CLAUDE = process.env.HMR_LLM_GATEWAY_CLAUDE_URL ?? "http://127.0.0.1:4317/claude";
+const ENTITLED_MODEL = process.env.HMR_LLM_GATEWAY_MODEL ?? "swe-1-6-slow";
+const live = process.env.HMR_LIVE_BUNDLED_HELPER_LLM_GATEWAY === "1";
 
-describe("app-bundled helper with live Devin Bridge", () => {
+describe("app-bundled helper with live LLM Gateway", () => {
   (live ? it : it.skip)("runs a real Claude parent and Explore child through the bundled helper", async () => {
     const root = await temporaryRoot();
     const home = resolve(root, "home");
@@ -27,8 +27,8 @@ describe("app-bundled helper with live Devin Bridge", () => {
 
     const config = defaultConfig(root);
     config.harnesses.claude.enabled = true;
-    config.harnesses.claude.originalUpstream.baseUrl = BRIDGE_CLAUDE;
-    config.routes.claude.Explore = { enabled: true, model: ENTITLED_MODEL, upstream: { baseUrl: BRIDGE_CLAUDE, protocol: "anthropic-messages" } };
+    config.harnesses.claude.originalUpstream.baseUrl = GATEWAY_CLAUDE;
+    config.routes.claude.Explore = { enabled: true, model: ENTITLED_MODEL, upstream: { baseUrl: GATEWAY_CLAUDE, protocol: "anthropic-messages" } };
     await saveConfig(configPath, config);
 
     const isolatedEnv = { ...sanitizedEnv(), HMR_HOME: home };

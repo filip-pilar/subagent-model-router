@@ -9,19 +9,19 @@ import { createGateway } from "../src/gateway.js";
 import { installIntegration } from "../src/lifecycle.js";
 import { close, temporaryRoot, writeJson } from "./helpers.js";
 
-const BRIDGE_OPENAI = process.env.HMR_DEVIN_OPENAI_URL ?? "http://127.0.0.1:4317/openai/v1";
-const BRIDGE_CLAUDE = process.env.HMR_DEVIN_CLAUDE_URL ?? "http://127.0.0.1:4317/claude";
-const ENTITLED_MODEL = process.env.HMR_DEVIN_MODEL ?? "swe-1-6-slow";
-const DENIED_MODEL = process.env.HMR_DEVIN_DENIED_MODEL ?? "swe-1-7-lightning";
-const live = process.env.HMR_LIVE_DEVIN_BRIDGE === "1";
+const GATEWAY_OPENAI = process.env.HMR_LLM_GATEWAY_OPENAI_URL ?? "http://127.0.0.1:4317/openai/v1";
+const GATEWAY_CLAUDE = process.env.HMR_LLM_GATEWAY_CLAUDE_URL ?? "http://127.0.0.1:4317/claude";
+const ENTITLED_MODEL = process.env.HMR_LLM_GATEWAY_MODEL ?? "swe-1-6-slow";
+const DENIED_MODEL = process.env.HMR_LLM_GATEWAY_DENIED_MODEL ?? "swe-1-7-lightning";
+const live = process.env.HMR_LIVE_LLM_GATEWAY === "1";
 const servers: Server[] = [];
 
 interface UpstreamCapture { url: string; body: Record<string, any>; headers: Record<string, string>; responseStatus?: number; responseContentType?: string }
 
 afterEach(async () => { while (servers.length) await close(servers.pop()!); });
 
-describe("live Devin Bridge integration", () => {
-  (live ? it : it.skip)("runs a real Claude parent and Explore child through Devin Bridge and verifies cleanup", async () => {
+describe("live LLM Gateway integration", () => {
+  (live ? it : it.skip)("runs a real Claude parent and Explore child through LLM Gateway and verifies cleanup", async () => {
     const root = await temporaryRoot();
     const home = resolve(root, "home");
     const claudeConfig = resolve(home, ".claude");
@@ -36,11 +36,11 @@ describe("live Devin Bridge integration", () => {
     const configPath = resolve(root, "router/config.json");
     const config = defaultConfig(root);
     config.harnesses.claude.enabled = true;
-    config.harnesses.claude.originalUpstream.baseUrl = BRIDGE_CLAUDE;
+    config.harnesses.claude.originalUpstream.baseUrl = GATEWAY_CLAUDE;
     config.routes.claude.Explore = {
       enabled: true,
       model: ENTITLED_MODEL,
-      upstream: { baseUrl: BRIDGE_CLAUDE, protocol: "anthropic-messages" },
+      upstream: { baseUrl: GATEWAY_CLAUDE, protocol: "anthropic-messages" },
     };
     await saveConfig(configPath, config);
     const gateway = await createGateway({ configPath, logger: (record) => logs.push(record), fetch: recordingFetch(captures) });
@@ -120,7 +120,7 @@ describe("live Devin Bridge integration", () => {
       body: JSON.stringify({ model: ENTITLED_MODEL, max_tokens: 32, stream: true, messages: [{ role: "user", content: `Reply with exactly ${replayNonce}` }] }),
     });
     const replayText = await replay.text();
-    if (!replay.ok) throw new Error(`Devin Bridge cleanup replay returned ${replay.status}: ${replayText}`);
+    if (!replay.ok) throw new Error(`LLM Gateway cleanup replay returned ${replay.status}: ${replayText}`);
     expect(logs.at(-1)?.routed).toBe(false);
     expect(anthropicTextDeltas(replayText)).toContain(replayNonce);
     expect((await routerStatus(config.gateway.port)).mappings).toBe(0);
@@ -144,7 +144,7 @@ describe("live Devin Bridge integration", () => {
         ...template,
         slug: ENTITLED_MODEL,
         display_name: ENTITLED_MODEL,
-        description: "Devin Bridge live-test model",
+        description: "LLM Gateway live-test model",
         visibility: "list",
         base_instructions: "You are a tool-use test agent. When the user asks you to call a function tool, invoke that tool immediately. Never describe, promise, or simulate a tool call in text. For spawn_agent, call it and then use wait_agent until the child completes.",
       }],
@@ -154,14 +154,14 @@ describe("live Devin Bridge integration", () => {
     const configPath = resolve(root, "router/config.json");
     const config = defaultConfig(root);
     config.harnesses.codex.enabled = true;
-    config.harnesses.codex.originalUpstream.baseUrl = BRIDGE_OPENAI;
+    config.harnesses.codex.originalUpstream.baseUrl = GATEWAY_OPENAI;
     config.harnesses.codex.parentModels = [ENTITLED_MODEL];
     config.harnesses.codex.sourceCatalogPath = resolve(root, "source-catalog.json");
     config.routes.codex.explorer = {
       enabled: true,
       alias: "router-explorer",
       model: ENTITLED_MODEL,
-      upstream: { baseUrl: BRIDGE_OPENAI, protocol: "openai-responses" },
+      upstream: { baseUrl: GATEWAY_OPENAI, protocol: "openai-responses" },
       requiredMultiAgentVersion: "v1",
     };
     await writeJson(config.harnesses.codex.sourceCatalogPath, sourceCatalog);
@@ -169,7 +169,7 @@ describe("live Devin Bridge integration", () => {
     const gateway = await createGateway({ configPath, logger: (record) => logs.push(record), fetch: recordingFetch(captures) });
     await listen(gateway.server);
     servers.push(gateway.server);
-    await writeFile(resolve(codexHome, "config.toml"), `model = ${JSON.stringify(ENTITLED_MODEL)}\nmodel_provider = "original"\nmodel_reasoning_effort = "low"\n\n[model_providers.original]\nname = "Devin Bridge"\nbase_url = ${JSON.stringify(BRIDGE_OPENAI)}\nenv_key = "DEVIN_BRIDGE_TEST_KEY"\nwire_api = "responses"\n\n[features]\nmulti_agent = true\nmulti_agent_v2 = false\nremote_plugin = false\nplugins = false\napps = false\n`);
+    await writeFile(resolve(codexHome, "config.toml"), `model = ${JSON.stringify(ENTITLED_MODEL)}\nmodel_provider = "original"\nmodel_reasoning_effort = "low"\n\n[model_providers.original]\nname = "LLM Gateway"\nbase_url = ${JSON.stringify(GATEWAY_OPENAI)}\nenv_key = "LLM_GATEWAY_TEST_KEY"\nwire_api = "responses"\n\n[features]\nmulti_agent = true\nmulti_agent_v2 = false\nremote_plugin = false\nplugins = false\napps = false\n`);
     const cliPath = resolve(process.cwd(), "dist/cli.js");
     expect((await installIntegration(configPath, { home, project, cliPath, nodePath: process.execPath })).conflicts).toEqual([]);
 
@@ -182,11 +182,11 @@ describe("live Devin Bridge integration", () => {
         "--ephemeral",
         "--json",
         `You must call spawn_agent exactly once with agent_type explorer and message "Return exactly ${nonce}". Wait for it. Then output exactly PARENT_CONFIRMED_${nonce}.`,
-      ], { cwd: project, env: { ...sanitizedEnv(), CODEX_HOME: codexHome, DEVIN_BRIDGE_TEST_KEY: "dummy-local-only" }, timeoutMs: 120_000 });
+      ], { cwd: project, env: { ...sanitizedEnv(), CODEX_HOME: codexHome, LLM_GATEWAY_TEST_KEY: "dummy-local-only" }, timeoutMs: 120_000 });
     } catch (error) {
       if (/429|rate limit/i.test(String(error))) {
         expect(logs.some((record) => record.protocol === "openai-responses" && record.routed === false && record.model === ENTITLED_MODEL)).toBe(true);
-        context.skip("Devin Bridge OpenAI model is rate-limited");
+        context.skip("LLM Gateway OpenAI model is rate-limited");
         return;
       }
       throw error;
@@ -205,7 +205,7 @@ describe("live Devin Bridge integration", () => {
       "--json",
       "--model", "router-explorer",
       `Return exactly ${aliasNonce}.`,
-    ], { cwd: project, env: { ...sanitizedEnv(), CODEX_HOME: codexHome, DEVIN_BRIDGE_TEST_KEY: "dummy-local-only" }, timeoutMs: 120_000 });
+    ], { cwd: project, env: { ...sanitizedEnv(), CODEX_HOME: codexHome, LLM_GATEWAY_TEST_KEY: "dummy-local-only" }, timeoutMs: 120_000 });
     expect(aliasResult.stdout).toContain(aliasNonce);
     expect(logs.some((record) => record.protocol === "openai-responses" && record.routed === true && record.agentType === "explorer" && record.model === ENTITLED_MODEL)).toBe(true);
     expect(logs.some((record) => record.model === "router-explorer")).toBe(false);
@@ -231,11 +231,11 @@ describe("live Devin Bridge integration", () => {
     const configPath = resolve(root, "router/config.json");
     const config = defaultConfig(root);
     config.harnesses.claude.enabled = true;
-    config.harnesses.claude.originalUpstream.baseUrl = BRIDGE_CLAUDE;
+    config.harnesses.claude.originalUpstream.baseUrl = GATEWAY_CLAUDE;
     config.harnesses.codex.enabled = true;
-    config.harnesses.codex.originalUpstream.baseUrl = BRIDGE_OPENAI;
-    config.routes.claude.Explore = { enabled: true, model: DENIED_MODEL, upstream: { baseUrl: BRIDGE_CLAUDE, protocol: "anthropic-messages" } };
-    config.routes.codex.explorer = { enabled: true, alias: "router-explorer", model: DENIED_MODEL, upstream: { baseUrl: BRIDGE_OPENAI, protocol: "openai-responses" } };
+    config.harnesses.codex.originalUpstream.baseUrl = GATEWAY_OPENAI;
+    config.routes.claude.Explore = { enabled: true, model: DENIED_MODEL, upstream: { baseUrl: GATEWAY_CLAUDE, protocol: "anthropic-messages" } };
+    config.routes.codex.explorer = { enabled: true, alias: "router-explorer", model: DENIED_MODEL, upstream: { baseUrl: GATEWAY_OPENAI, protocol: "openai-responses" } };
     await saveConfig(configPath, config);
     const gateway = await createGateway({ configPath, logger: (record) => logs.push(record) });
     await listen(gateway.server);

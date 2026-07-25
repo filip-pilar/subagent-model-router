@@ -22,7 +22,7 @@
     "lint": "eslint . --max-warnings=0",
     "start": "node dist/cli.js start",
     "test": "vitest run",
-    "test:bridge": "npm run build && HMR_LIVE_DEVIN_BRIDGE=1 vitest run test/live-devin-bridge.test.ts",
+    "test:gateway": "npm run build && HMR_LIVE_LLM_GATEWAY=1 vitest run test/live-llm-gateway.test.ts",
     "test:live": "npm run test:live-codex && npm run test:live-claude",
     "test:live-claude": "HMR_LIVE_CLAUDE=1 vitest run test/live-claude.test.ts",
     "test:live-codex": "HMR_LIVE_CODEX=1 vitest run test/live-codex.test.ts",
