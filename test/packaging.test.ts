@@ -1,17 +1,30 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultGlobalConfig } from "../src/config.js";
+import { ROUTER_VERSION } from "../src/version.js";
 
 describe("standalone helper", () => {
+  it("keeps the npm artifact limited to portable compiled files", () => {
+    const manifest = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { files?: string[] };
+    expect(manifest.files).toEqual([
+      "dist/*.js",
+      "dist/*.js.map",
+      "dist/*.d.ts",
+      "README.md",
+      "LICENSE",
+    ]);
+    expect(manifest.files).not.toContain("dist");
+  });
+
   it("compiles with its dependencies, serves readiness, and obeys its parent lifeline", { timeout: 30_000 }, async () => {
     if (process.platform !== "darwin" || process.arch !== "arm64") return;
     const output = resolve(mkdtempSync(resolve(tmpdir(), "hmr-helper-")), "helper");
     execFileSync(process.execPath, [resolve("bin/build-helper.mjs"), "--output", output], { stdio: "pipe", timeout: 30_000 });
-    expect(execFileSync(output, ["--version"], { encoding: "utf8" }).trim()).toBe("0.1.0");
+    expect(execFileSync(output, ["--version"], { encoding: "utf8" }).trim()).toBe(ROUTER_VERSION);
     expect(execFileSync(output, ["--help"], { encoding: "utf8" })).toContain("app-state");
     const home = resolve(output, "../home");
     const configPath = resolve(home, ".local/share/subagent-model-router/config.json");

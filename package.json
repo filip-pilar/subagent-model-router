@@ -2,6 +2,22 @@
   "name": "subagent-model-router",
   "version": "0.1.0",
   "description": "Local protocol-preserving subagent model router for Claude Code and Codex",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/filip-pilar/subagent-model-router.git"
+  },
+  "homepage": "https://github.com/filip-pilar/subagent-model-router#readme",
+  "bugs": {
+    "url": "https://github.com/filip-pilar/subagent-model-router/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "model-router",
+    "subagents"
+  ],
+  "packageManager": "npm@11.9.0",
   "type": "module",
   "bin": {
     "subagent-model-router": "dist/cli.js"
@@ -10,7 +26,9 @@
     ".": "./dist/index.js"
   },
   "files": [
-    "dist",
+    "dist/*.js",
+    "dist/*.js.map",
+    "dist/*.d.ts",
     "README.md",
     "LICENSE"
   ],
@@ -18,7 +36,8 @@
     "build": "tsc -p tsconfig.json",
     "build:helper": "node bin/build-helper.mjs",
     "build:macos": "node bin/build-macos-app.mjs",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "check": "npm run check:versions && npm run lint && npm run typecheck && npm test && npm run build",
+    "check:versions": "node bin/check-versions.mjs",
     "lint": "eslint . --max-warnings=0",
     "start": "node dist/cli.js start",
     "test": "vitest run",

@@ -11,12 +11,26 @@ const HOP_BY_HOP = new Set([
   "upgrade",
 ]);
 
-export function forwardedHeaders(source: Headers, _original: Upstream, target: Upstream, env: NodeJS.ProcessEnv = process.env): Headers {
+const CREDENTIAL_HEADERS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "x-api-key",
+  "api-key",
+  "x-goog-api-key",
+  "x-auth-token",
+  "x-access-token",
+  "cookie",
+  "cookie2",
+]);
+
+export function forwardedHeaders(source: Headers, original: Upstream, target: Upstream, env: NodeJS.ProcessEnv = process.env): Headers {
   const output = new Headers();
   const connectionTokens = new Set((source.get("connection") ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
+  const preserveCredentials = sameOrigin(original.baseUrl, target.baseUrl);
   for (const [name, value] of source) {
     const lower = name.toLowerCase();
     if (HOP_BY_HOP.has(lower) || connectionTokens.has(lower) || lower === "host" || lower === "content-length") continue;
+    if (!preserveCredentials && isCredentialHeader(lower, original)) continue;
     output.set(name, value);
   }
   output.delete("content-encoding");
@@ -26,6 +40,17 @@ export function forwardedHeaders(source: Headers, _original: Upstream, target: U
     output.set(target.authorization.header ?? "Authorization", target.authorization.scheme ? `${target.authorization.scheme} ${value}` : value);
   }
   return output;
+}
+
+function isCredentialHeader(name: string, original: Upstream): boolean {
+  const configured = (original.authorization?.header ?? "Authorization").toLowerCase();
+  return name === configured
+    || CREDENTIAL_HEADERS.has(name)
+    || /(?:^|[-_])(?:api[-_]?key|token|secret|credential)(?:$|[-_])/.test(name);
+}
+
+function sameOrigin(left: string, right: string): boolean {
+  return new URL(left).origin === new URL(right).origin;
 }
 
 export function responseHeaders(source: Headers): Headers {

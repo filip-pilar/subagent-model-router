@@ -32,7 +32,7 @@ describe("localhost gateway acceptance", () => {
 
     await consume(fetch(`${url}/claude/v1/messages`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer original", "x-main": "yes" }, body: JSON.stringify({ model: "claude-main", messages: [], max_tokens: 1 }) }));
     await consume(fetch(`${url}/__router/claude/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hook_event_name: "SubagentStart", session_id: "session-a", agent_id: "agent-1", agent_type: "Explore" }) }));
-    await consume(fetch(`${url}/claude/v1/messages`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer original", "X-Claude-Code-Session-Id": "session-a", "X-Claude-Code-Agent-Id": "agent-1" }, body: JSON.stringify({ model: "claude-main", messages: [], max_tokens: 1 }) }));
+    await consume(fetch(`${url}/claude/v1/messages`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer original", cookie: "session=secret", "x-provider-token": "provider-secret", "X-Claude-Code-Session-Id": "session-a", "X-Claude-Code-Agent-Id": "agent-1" }, body: JSON.stringify({ model: "claude-main", messages: [], max_tokens: 1 }) }));
     await consume(fetch(`${url}/__router/claude/stop`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hook_event_name: "SubagentStop", session_id: "session-a", agent_id: "agent-1", agent_type: "Explore" }) }));
     await consume(fetch(`${url}/claude/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "X-Claude-Code-Session-Id": "session-a", "X-Claude-Code-Agent-Id": "agent-1" }, body: JSON.stringify({ model: "claude-main", messages: [], max_tokens: 1 }) }));
     gateway.identities.register("session-b", "agent-1", "Unknown");
@@ -43,7 +43,8 @@ describe("localhost gateway acceptance", () => {
     expect(original.captures.map((item) => item.body.model)).toEqual(["claude-main", "claude-main", "claude-main", "codex-parent"]);
     expect(custom.captures.map((item) => item.body.model)).toEqual(["claude-routed", "codex-routed"]);
     expect(original.captures[0]?.headers.authorization).toBe("Bearer original");
-    expect(custom.captures.every((item) => item.headers.authorization === "Bearer original")).toBe(true);
+    expect(custom.captures.every((item) => item.headers.authorization === undefined)).toBe(true);
+    expect(custom.captures.every((item) => item.headers.cookie === undefined && item.headers["x-provider-token"] === undefined)).toBe(true);
     expect(original.captures[0]?.path).toBe("/v1/messages");
     expect(original.captures[3]?.path).toBe("/v1/responses");
   });

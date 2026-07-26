@@ -32,6 +32,21 @@ private final class HelperStub: @unchecked Sendable {
     #expect(stub.callCount == 1)
 }
 
+@Test func sharedAppStateContractDecodesInSwift() throws {
+    let fixture = try repositoryRoot()
+        .appending(path: "contracts/app-state-v2.json")
+    let payload = try JSONDecoder().decode(AppStatePayload.self, from: Data(contentsOf: fixture))
+
+    #expect(payload.config.version == 2)
+    #expect(payload.config.routes.claude["Explore"]?.authorization?.header == "X-Api-Key")
+    #expect(payload.config.routes.codex["explorer"]?.alias == "router-explorer")
+    #expect(payload.config.preserved.customCodexAgents.count == 1)
+    #expect(payload.integration.claude)
+    #expect(payload.detection.codex.appPath == "/Applications/Codex.app")
+    #expect(payload.agents.map(\.id) == ["claude:Explore", "codex:explorer"])
+    #expect(payload.codexParentModel == "parent-model")
+}
+
 @MainActor
 @Test func watcherRefreshDoesNotCreateAFeedbackLoop() async throws {
     let fixture = try makeFixture()
@@ -130,6 +145,16 @@ private struct Fixture: @unchecked Sendable {
     let paths: AppPaths
     let config: RouterConfig
     let payload: String
+}
+
+private func repositoryRoot() throws -> URL {
+    var directory = URL(filePath: #filePath).deletingLastPathComponent()
+    for _ in 0..<8 {
+        let candidate = directory.appending(path: "contracts/app-state-v2.json")
+        if FileManager.default.fileExists(atPath: candidate.path) { return directory }
+        directory.deleteLastPathComponent()
+    }
+    throw CocoaError(.fileNoSuchFile)
 }
 
 private func makeFixture() throws -> Fixture {

@@ -1,0 +1,118 @@
+{
+  "config": {
+    "version": 2,
+    "gateway": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 9476,
+      "maxBodyBytes": 16777216
+    },
+    "destinations": {
+      "local-both": {
+        "name": "Local Both",
+        "openaiBaseUrl": "http://127.0.0.1:4317/openai/v1",
+        "anthropicBaseUrl": "http://127.0.0.1:4317/claude"
+      }
+    },
+    "harnesses": {
+      "claude": {
+        "enabled": true,
+        "originalUpstream": {
+          "baseUrl": "https://api.anthropic.com",
+          "protocol": "anthropic-messages"
+        },
+        "mappingTtlMs": 1800000,
+        "settingsPath": "/tmp/contract-home/.claude/settings.json"
+      },
+      "codex": {
+        "enabled": true,
+        "originalUpstream": {
+          "baseUrl": "https://api.openai.com/v1",
+          "protocol": "openai-responses"
+        },
+        "hookTimeoutMs": 1500,
+        "configPath": "/tmp/contract-home/.codex/config.toml",
+        "hooksPath": "/tmp/contract-home/.codex/hooks.json",
+        "sourceCatalogPath": "/tmp/contract-data/codex-source-catalog.json",
+        "overlayCatalogPath": "/tmp/contract-data/codex-model-catalog.json",
+        "parentModels": [
+          "parent-model"
+        ]
+      }
+    },
+    "routes": {
+      "claude": {
+        "Explore": {
+          "enabled": true,
+          "model": "claude-child",
+          "destination": "local-both",
+          "authorization": {
+            "env": "LOCAL_CLAUDE_KEY",
+            "header": "X-Api-Key"
+          }
+        }
+      },
+      "codex": {
+        "explorer": {
+          "enabled": true,
+          "alias": "router-explorer",
+          "model": "codex-child",
+          "destination": "local-both",
+          "authorization": {
+            "env": "LOCAL_CODEX_KEY",
+            "header": "Authorization",
+            "scheme": "Bearer"
+          },
+          "requiredMultiAgentVersion": "v1"
+        }
+      }
+    },
+    "preserved": {
+      "customCodexAgents": {
+        "/tmp/contract-home/.codex/agents/explorer.toml": {
+          "agentType": "explorer",
+          "path": "/tmp/contract-home/.codex/agents/explorer.toml",
+          "alias": "router-explorer",
+          "originalModel": "parent-model",
+          "originalModelLine": "model = \"parent-model\"",
+          "installedModelLine": "model = \"router-explorer\"",
+          "modelOffset": 0,
+          "originalContentHash": "original-hash",
+          "installedContentHash": "installed-hash"
+        }
+      }
+    }
+  },
+  "integration": {
+    "claude": true,
+    "codex": true
+  },
+  "detection": {
+    "claude": {
+      "detected": true,
+      "version": "2.1.216",
+      "cliPath": "/usr/local/bin/claude"
+    },
+    "codex": {
+      "detected": true,
+      "version": "0.145.0",
+      "cliPath": "/usr/local/bin/codex",
+      "appPath": "/Applications/Codex.app"
+    }
+  },
+  "agents": [
+    {
+      "harness": "claude",
+      "name": "Explore",
+      "kind": "built-in"
+    },
+    {
+      "harness": "codex",
+      "name": "explorer",
+      "kind": "user",
+      "path": "/tmp/contract-home/.codex/agents/explorer.toml",
+      "explicitModel": "parent-model"
+    }
+  ],
+  "codexParentModel": "parent-model"
+}

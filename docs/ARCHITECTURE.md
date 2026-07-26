@@ -1,0 +1,62 @@
+# Architecture
+
+Subagent Model Router is a native macOS controller around a protocol-preserving TypeScript gateway. The Swift app owns presentation and helper-process lifecycle; the helper owns routing, configuration validation, harness integration, and restoration.
+
+## Components
+
+| Area | Responsibility |
+| --- | --- |
+| `src/gateway.ts` | Loopback HTTP server, request decoding, forwarding, streaming, and readiness |
+| `src/routing.ts`, `src/adapters.ts` | Route decisions and protocol-specific model replacement |
+| `src/config.ts`, `src/types.ts` | Versioned configuration schema, migration, validation, and persistence |
+| `src/lifecycle.ts` | High-level setup, removal, reset, and migration orchestration |
+| `src/lifecycle-*.ts` | JSON hook mutation, Codex configuration, and install-state helpers |
+| `src/discovery.ts`, `src/catalog.ts` | Global agent discovery and Codex model-catalog overlays |
+| `src/cli.ts` | Command-line and Swift-helper JSON interface |
+| `macos/SubagentModelRouterApp` | Menu-bar UI, helper installation, process ownership, and config watching |
+
+The helper/app JSON boundary is represented by `contracts/app-state-v2.json`. TypeScript validates its configuration and Swift decodes the same fixture.
+
+## Request flow
+
+### Claude Code
+
+1. Global `SubagentStart` and `SubagentStop` hooks register and remove `(session, agent ID) → agent type` mappings.
+2. Claude sends Anthropic Messages traffic to `127.0.0.1:9476/claude`.
+3. Requests without a mapped child identity pass through to the original model and upstream.
+4. Enabled mapped routes replace only the wire model and upstream destination.
+
+### Codex
+
+1. A global `PreToolUse` hook assigns a hidden model alias to configured subagents.
+2. A generated model-catalog overlay advertises aliases and optional V1 metadata.
+3. Codex sends OpenAI Responses traffic to the local provider.
+4. The gateway recognizes the alias, restores the configured wire model, and forwards to the selected destination.
+
+The gateway never translates between the two protocols.
+
+## Configuration lifecycle
+
+Setup mutates only router-owned values:
+
+- Claude settings: `ANTHROPIC_BASE_URL` and two lifecycle hooks.
+- Codex hooks: one `PreToolUse` command.
+- Codex TOML: two top-level scalars and a marked provider block.
+- Explicit global Codex agent models: normalized only when required, with exact restoration metadata.
+
+Writes are atomic. Install state records original values, installed values, and content hashes. Normal removal stops on later edits; force removal is the explicit destructive path. First-time desktop setup snapshots all affected files so a partial failure can be rolled back.
+
+## Security boundaries
+
+- The listener is fixed to loopback and a fixed port.
+- URLs cannot contain inline credentials or credential-like query parameters.
+- Stored authorization contains environment-variable references, never secret values.
+- Logs pass through recursive credential redaction.
+- Credential headers are preserved only when the target has the same origin as the original upstream. Cross-origin routes receive only explicitly configured environment-backed authorization.
+- The local hook and readiness endpoints are unauthenticated. The trust boundary is the current macOS user account and its global Claude/Codex configuration.
+
+## Generated artifacts and releases
+
+`dist/` and `.build/` are disposable build output. The standalone helper is compiled by Bun and bundled with the Swift executable into an ad-hoc-signed application.
+
+`npm run check:versions` enforces the shared release version in the npm manifests, TypeScript runtime, and application plist. `npm run check` covers deterministic TypeScript and helper checks; native tests and full application packaging remain separate commands.

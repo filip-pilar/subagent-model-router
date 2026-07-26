@@ -61,18 +61,46 @@ describe("validation and safety", () => {
     expect(validateConfig(config).join("\n")).toMatch(/supports only v1/);
   });
 
-  it("preserves end-to-end headers across endpoints and injects env authorization", () => {
-    const original = { baseUrl: "http://original/v1", protocol: "openai-responses" as const };
-    const source = new Headers({ Authorization: "Bearer secret", "X-Api-Key": "anthropic-secret", "X-Custom": "keep", Connection: "x-remove", "X-Remove": "gone" });
-    const same = forwardedHeaders(source, original, original);
+  it("keeps same-origin credentials and isolates credentials between destination origins", () => {
+    const original = {
+      baseUrl: "http://original/v1",
+      protocol: "openai-responses" as const,
+      authorization: { env: "ORIGINAL_KEY", header: "X-Custom-Auth" },
+    };
+    const source = new Headers({
+      Authorization: "Bearer secret",
+      "X-Api-Key": "anthropic-secret",
+      "X-Provider-Token": "provider-secret",
+      "X-Custom-Auth": "custom-secret",
+      Cookie: "session=secret",
+      "X-Custom": "keep",
+      Connection: "x-remove",
+      "X-Remove": "gone",
+    });
+    const same = forwardedHeaders(source, original, original, { ORIGINAL_KEY: "custom-secret" });
     expect(same.get("authorization")).toBe("Bearer secret");
     expect(same.get("x-api-key")).toBe("anthropic-secret");
+    expect(same.get("x-provider-token")).toBe("provider-secret");
+    expect(same.get("x-custom-auth")).toBe("custom-secret");
+    expect(same.get("cookie")).toBe("session=secret");
     expect(same.get("x-custom")).toBe("keep");
     expect(same.has("x-remove")).toBe(false);
+    const unauthenticatedTarget = { baseUrl: "http://custom/v1", protocol: "openai-responses" as const };
+    const isolated = forwardedHeaders(source, original, unauthenticatedTarget);
+    expect(isolated.has("authorization")).toBe(false);
+    expect(isolated.has("x-api-key")).toBe(false);
+    expect(isolated.has("x-provider-token")).toBe(false);
+    expect(isolated.has("x-custom-auth")).toBe(false);
+    expect(isolated.has("cookie")).toBe(false);
+    expect(isolated.get("x-custom")).toBe("keep");
     const target = { baseUrl: "http://custom/v1", protocol: "openai-responses" as const, authorization: { env: "CUSTOM_KEY", scheme: "Bearer" } };
     const routed = forwardedHeaders(source, original, target, { CUSTOM_KEY: "new-secret" });
     expect(routed.get("authorization")).toBe("Bearer new-secret");
-    expect(routed.get("x-api-key")).toBe("anthropic-secret");
+    expect(routed.has("x-api-key")).toBe(false);
+    const apiKeyTarget = { ...target, authorization: { env: "CUSTOM_KEY", header: "X-Api-Key" } };
+    expect(forwardedHeaders(source, original, apiKeyTarget, { CUSTOM_KEY: "destination-secret" }).get("x-api-key")).toBe("destination-secret");
+    const tokenTarget = { ...target, authorization: { env: "CUSTOM_KEY", header: "X-Provider-Token" } };
+    expect(forwardedHeaders(source, original, tokenTarget, { CUSTOM_KEY: "replacement-token" }).get("x-provider-token")).toBe("replacement-token");
   });
 
   it("redacts credentials recursively and in error text", () => {

@@ -11,11 +11,12 @@ Requirements:
 - Apple Silicon Mac running macOS 15 or newer
 - Claude Code, the Codex CLI, or the Codex desktop app already installed
 - A destination that exposes an Anthropic Messages endpoint, an OpenAI Responses endpoint, or both
+- For source builds: Node.js 24 and Bun 1.3.14 (the pinned versions are in `.node-version` and `.bun-version`)
 
 Build and open the ad-hoc-signed app:
 
 ```sh
-npm install
+npm ci
 npm run build:macos
 open "dist/Subagent Model Router.app"
 ```
@@ -101,7 +102,7 @@ The app does not store provider secrets. An advanced route may reference an envi
 }
 ```
 
-Incoming end-to-end headers are preserved across destinations. Transport headers such as `Host`, `Content-Length`, `Connection`, and other hop-by-hop fields are removed or reconstructed.
+Non-credential end-to-end headers are preserved across destinations. Credential headers are preserved only when a request stays on the original upstream origin. A different destination receives credentials only from its environment-variable authorization reference. Transport headers such as `Host`, `Content-Length`, `Connection`, and other hop-by-hop fields are removed or reconstructed.
 
 For direct CLI use:
 
@@ -128,6 +129,8 @@ Normal removal refuses to overwrite a router-owned value that changed after setu
 **Reset Everything** restores both harnesses, removes destinations and routes, clears app preferences, disables Launch at Login, and stops the gateway. It never uninstalls Claude Code or Codex.
 
 ## Development and verification
+
+Internal component boundaries and lifecycle behavior are documented in [Architecture](docs/ARCHITECTURE.md).
 
 Run deterministic TypeScript, packaging, and native checks:
 
