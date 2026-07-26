@@ -14,18 +14,18 @@ describe("standalone helper", () => {
     expect(execFileSync(output, ["--version"], { encoding: "utf8" }).trim()).toBe("0.1.0");
     expect(execFileSync(output, ["--help"], { encoding: "utf8" })).toContain("app-state");
     const home = resolve(output, "../home");
-    const configPath = resolve(home, ".local/share/harness-model-router/config.json");
+    const configPath = resolve(home, ".local/share/subagent-model-router/config.json");
     mkdirSync(resolve(configPath, ".."), { recursive: true });
     writeFileSync(configPath, `${JSON.stringify(defaultGlobalConfig(resolve(configPath, "..")), null, 2)}\n`);
     expect(execFileSync(output, ["--config", configPath, "hook", "codex-pretool"], { encoding: "utf8", input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "spawn_agent", tool_input: { agent_type: "unknown" } }) })).toBe("");
-    const child = spawn(output, ["--config", configPath, "start", "--parent-lifeline"], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, HMR_HOME: home } });
+    const child = spawn(output, ["--config", configPath, "start", "--parent-lifeline"], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, SMR_HOME: home } });
     try {
       let response: Response | undefined;
       for (let attempt = 0; attempt < 50; attempt += 1) {
         try { response = await fetch("http://127.0.0.1:9476/__router/readiness"); if (response.ok) break; } catch { /* starting */ }
         await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
       }
-      expect(response?.headers.get("x-harness-model-router")).toBe("1");
+      expect(response?.headers.get("x-subagent-model-router")).toBe("1");
       child.stdin.end();
       const [status] = await once(child, "exit");
       expect(status).toBe(0);

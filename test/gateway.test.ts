@@ -119,7 +119,7 @@ describe("localhost gateway acceptance", () => {
     await writeFile(path, "{ invalid json");
     const response = await fetch(`http://127.0.0.1:${address.port}/__router/readiness`);
     expect(response.status).toBe(200);
-    expect(response.headers.get("x-harness-model-router")).toBe("1");
+    expect(response.headers.get("x-subagent-model-router")).toBe("1");
     expect(records.some((record) => record.event === "config_invalid")).toBe(true);
   });
 });

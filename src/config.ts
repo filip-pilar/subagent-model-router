@@ -6,7 +6,7 @@ import type { Destination, Harness, Protocol, Route, RouterConfig, Upstream } fr
 export const DEFAULT_CONFIG_NAME = "config.json";
 
 export function defaultConfig(root: string): RouterConfig {
-  const dataDir = resolve(root, ".harness-model-router");
+  const dataDir = resolve(root, ".subagent-model-router");
   return {
     version: 2,
     gateway: { enabled: true, host: "127.0.0.1", port: 9476, maxBodyBytes: 16 * 1024 * 1024 },

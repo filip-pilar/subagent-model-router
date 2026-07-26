@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 /* global process */
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { values } = parseArgs({ options: { output: { type: "string", short: "o" }, target: { type: "string" } }, strict: true });
-const output = resolve(values.output || join(root, "dist", "harness-model-router-helper"));
+const defaultOutput = join(root, "dist", "subagent-model-router-helper");
+const output = resolve(values.output || defaultOutput);
+if (!values.output) rmSync(join(root, "dist", "harness-model-router-helper"), { force: true });
 mkdirSync(dirname(output), { recursive: true });
 
 for (const [command, args] of [

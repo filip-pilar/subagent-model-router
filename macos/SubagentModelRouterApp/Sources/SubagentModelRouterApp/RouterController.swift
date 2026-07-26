@@ -10,7 +10,7 @@ final class RouterController: ObservableObject {
     struct Feedback: Equatable { var title: String; var detail: String; var failure: Bool }
     private struct ModelDiscoveryKey: Hashable { var destination: String; var harness: Harness }
 
-    static let usageGuideURL = URL(string: "https://github.com/filip-pilar/harness-model-router/blob/main/docs/USING_THE_APP.md")!
+    static let usageGuideURL = URL(string: "https://github.com/filip-pilar/subagent-model-router/blob/main/docs/USING_THE_APP.md")!
 
     @Published private(set) var gatewayState: GatewayState = .checking
     @Published private(set) var payload: AppStatePayload?
@@ -73,10 +73,14 @@ final class RouterController: ObservableObject {
             let installHelper = installHelper
             let paths = paths
             try await Task.detached { try installHelper(paths) }.value
+            Self.migrateLegacyDefaults()
             try await refreshPayload(showErrors: true)
             startWatching()
-            if configured { try await startGateway() } else { gatewayState = .stopped }
-        } catch { record(error, title: "Harness Model Router could not start", affectGateway: true) }
+            if configured {
+                if SMAppService.mainApp.status != .enabled { try? SMAppService.mainApp.register() }
+                try await startGateway()
+            } else { gatewayState = .stopped }
+        } catch { record(error, title: "Subagent Model Router could not start", affectGateway: true) }
         busy = false
     }
 
@@ -121,7 +125,7 @@ final class RouterController: ObservableObject {
         }
         await stopGateway()
         busy = false
-        throw NSError(domain: "HarnessModelRouter", code: 1, userInfo: [NSLocalizedDescriptionKey: "The gateway did not become ready. Open the log for details."])
+        throw NSError(domain: "SubagentModelRouter", code: 1, userInfo: [NSLocalizedDescriptionKey: "The gateway did not become ready. Open the log for details."])
     }
 
     func stopGatewayAction() { Task { await stopGateway(); gatewayState = .stopped } }
@@ -221,7 +225,8 @@ final class RouterController: ObservableObject {
         pendingForceResetConflicts = []
         await stopGateway()
         if SMAppService.mainApp.status == .enabled { try? await SMAppService.mainApp.unregister() }
-        UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "dev.harnessmodelrouter.menu")
+        UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "dev.subagentmodelrouter.menu")
+        UserDefaults.standard.removePersistentDomain(forName: "dev.harnessmodelrouter.menu")
         launchAtLogin = false
         try? await refreshPayload()
         feedback = Feedback(title: "Router reset", detail: "Harness configuration and router data were restored.", failure: false)
@@ -242,7 +247,7 @@ final class RouterController: ObservableObject {
     func quit() {
         if configured && !UserDefaults.standard.bool(forKey: "skipQuitWarning") {
             let alert = NSAlert()
-            alert.messageText = "Quit Harness Model Router?"
+            alert.messageText = "Quit Subagent Model Router?"
             alert.informativeText = "Claude Code or Codex routing will be unavailable until the app restarts. Routing setup will remain installed."
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")
@@ -292,10 +297,10 @@ final class RouterController: ObservableObject {
 
     private func commandError(_ result: ProcessResult) -> Error {
         if let payload = try? JSONDecoder().decode(CommandErrorPayload.self, from: Data(result.stdout.utf8)) {
-            return NSError(domain: "HarnessModelRouter", code: Int(result.status), userInfo: [NSLocalizedDescriptionKey: payload.error])
+            return NSError(domain: "SubagentModelRouter", code: Int(result.status), userInfo: [NSLocalizedDescriptionKey: payload.error])
         }
         let message = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        return NSError(domain: "HarnessModelRouter", code: Int(result.status), userInfo: [NSLocalizedDescriptionKey: message.isEmpty ? result.stdout : message])
+        return NSError(domain: "SubagentModelRouter", code: Int(result.status), userInfo: [NSLocalizedDescriptionKey: message.isEmpty ? result.stdout : message])
     }
 
     private func record(_ error: Error, title: String, affectGateway: Bool = false) { recordFailure(title, error.localizedDescription, affectGateway: affectGateway) }
@@ -304,12 +309,12 @@ final class RouterController: ObservableObject {
     nonisolated private static func ensurePrivateDirectory(_ path: URL) throws {
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let values = try path.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        guard values.isDirectory == true, values.isSymbolicLink != true else { throw NSError(domain: "HarnessModelRouter", code: 2, userInfo: [NSLocalizedDescriptionKey: "Refusing unsafe data directory"]) }
+        guard values.isDirectory == true, values.isSymbolicLink != true else { throw NSError(domain: "SubagentModelRouter", code: 2, userInfo: [NSLocalizedDescriptionKey: "Refusing unsafe data directory"]) }
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path.path)
     }
 
     nonisolated static func installBundledHelper(paths: AppPaths) throws {
-        guard let bundled = Bundle.main.url(forResource: "harness-model-router-helper", withExtension: nil) else { throw NSError(domain: "HarnessModelRouter", code: 3, userInfo: [NSLocalizedDescriptionKey: "Bundled helper is missing"]) }
+        guard let bundled = Bundle.main.url(forResource: "subagent-model-router-helper", withExtension: nil) else { throw NSError(domain: "SubagentModelRouter", code: 3, userInfo: [NSLocalizedDescriptionKey: "Bundled helper is missing"]) }
         try ensurePrivateDirectory(paths.dataDirectory)
         let directory = paths.helper.deletingLastPathComponent()
         try ensurePrivateDirectory(directory)
@@ -317,6 +322,14 @@ final class RouterController: ObservableObject {
         try FileManager.default.copyItem(at: bundled, to: temporary)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: temporary.path)
         if rename(temporary.path, paths.helper.path) != 0 { try? FileManager.default.removeItem(at: temporary); throw posixError("Could not install helper") }
+    }
+
+    nonisolated private static func migrateLegacyDefaults() {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: "skipQuitWarning") == nil,
+              let legacy = UserDefaults(suiteName: "dev.harnessmodelrouter.menu"),
+              legacy.object(forKey: "skipQuitWarning") != nil else { return }
+        defaults.set(legacy.bool(forKey: "skipQuitWarning"), forKey: "skipQuitWarning")
     }
 
     nonisolated private static func posixError(_ message: String) -> NSError { NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "\(message): \(String(cString: strerror(errno)))"]) }

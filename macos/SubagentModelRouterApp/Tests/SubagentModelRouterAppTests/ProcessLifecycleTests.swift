@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import Testing
-@testable import HarnessModelRouterApp
+@testable import SubagentModelRouterApp
 
 @Test func helperStopsWhenLifelineCloses() async throws {
     let process = Process(), lifeline = Pipe()
@@ -21,10 +21,10 @@ import Testing
 }
 
 @Test func readinessPayloadRequiresExpectedIdentityFields() throws {
-    let data = Data(#"{"ready":true,"service":"harness-model-router","version":"0.1.0"}"#.utf8)
+    let data = Data(#"{"ready":true,"service":"subagent-model-router","version":"0.1.0"}"#.utf8)
     let value = try JSONDecoder().decode(RouterReadiness.Snapshot.self, from: data)
     #expect(value.ready)
-    #expect(value.service == "harness-model-router")
+    #expect(value.service == "subagent-model-router")
 }
 
 @Test func configurationWatcherObservesAtomicDirectoryChanges() throws {

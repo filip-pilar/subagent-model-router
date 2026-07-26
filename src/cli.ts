@@ -47,7 +47,7 @@ async function main(rawArgs: string[]): Promise<void> {
 
 function globalArguments(raw: string[]): { args: string[]; configPath: string } {
   const args = [...raw];
-  let configPath = process.env.HMR_CONFIG ?? appPaths(testableHome()).config;
+  let configPath = process.env.SMR_CONFIG ?? process.env.HMR_CONFIG ?? appPaths(testableHome()).config;
   const index = args.indexOf("--config");
   if (index >= 0) {
     const value = args[index + 1];
@@ -221,11 +221,14 @@ function option(args: string[], name: string): string | undefined {
 }
 
 async function optionalConfig(path: string): Promise<RouterConfig | undefined> { return await exists(path) ? loadConfig(path) : undefined; }
-function testableHome(): string { return process.env.HMR_HOME ? resolve(process.env.HMR_HOME) : homedir(); }
+function testableHome(): string {
+  const configured = process.env.SMR_HOME ?? process.env.HMR_HOME;
+  return configured ? resolve(configured) : homedir();
+}
 async function readStdin(): Promise<string> { const chunks: Buffer[] = []; for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk)); return Buffer.concat(chunks).toString("utf8"); }
 
 async function printHelp(): Promise<void> {
-  console.log(`harness-model-router ${ROUTER_VERSION}\n\nCommands:\n  app-state --json\n  setup <claude|codex> --helper-path <path>\n  remove <claude|codex> [--force]\n  config get|replace\n  reset [--force]\n  models <destination> <claude|codex>\n  init [--force]\n  discover [--json]\n  install [--force]\n  validate [--json]\n  route set <claude|codex> <agent> --model <slug> --endpoint <url> [--alias <alias>]\n  route enable|disable <claude|codex> <agent>\n  routes [--json]\n  catalog [--json]\n  status [--json]\n  start [--parent-lifeline]\n  enable|disable <claude|codex|all>\n  restore|uninstall [--force]\n\nGlobal:\n  --config <path>`);
+  console.log(`subagent-model-router ${ROUTER_VERSION}\n\nCommands:\n  app-state --json\n  setup <claude|codex> --helper-path <path>\n  remove <claude|codex> [--force]\n  config get|replace\n  reset [--force]\n  models <destination> <claude|codex>\n  init [--force]\n  discover [--json]\n  install [--force]\n  validate [--json]\n  route set <claude|codex> <agent> --model <slug> --endpoint <url> [--alias <alias>]\n  route enable|disable <claude|codex> <agent>\n  routes [--json]\n  catalog [--json]\n  status [--json]\n  start [--parent-lifeline]\n  enable|disable <claude|codex|all>\n  restore|uninstall [--force]\n\nGlobal:\n  --config <path>`);
 }
 
 async function printAppState(path: string): Promise<void> { console.log(JSON.stringify(await appState(path, testableHome()), null, 2)); }
@@ -277,6 +280,6 @@ function harnessArgument(value: string | undefined): Harness {
 main(process.argv.slice(2)).catch((error) => {
   const message = safeError(error);
   if (process.argv.includes("--json")) console.log(JSON.stringify({ ok: false, error: message }, null, 2));
-  else console.error(`harness-model-router: ${message}`);
+  else console.error(`subagent-model-router: ${message}`);
   process.exitCode = 1;
 });

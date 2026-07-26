@@ -1,10 +1,10 @@
 {
-  "name": "harness-model-router",
+  "name": "subagent-model-router",
   "version": "0.1.0",
   "description": "Local protocol-preserving subagent model router for Claude Code and Codex",
   "type": "module",
   "bin": {
-    "harness-model-router": "dist/cli.js"
+    "subagent-model-router": "dist/cli.js"
   },
   "exports": {
     ".": "./dist/index.js"
@@ -22,12 +22,12 @@
     "lint": "eslint . --max-warnings=0",
     "start": "node dist/cli.js start",
     "test": "vitest run",
-    "test:gateway": "npm run build && HMR_LIVE_LLM_GATEWAY=1 vitest run test/live-llm-gateway.test.ts",
+    "test:gateway": "npm run build && SMR_LIVE_LLM_GATEWAY=1 vitest run test/live-llm-gateway.test.ts",
     "test:live": "npm run test:live-codex && npm run test:live-claude",
-    "test:live-claude": "HMR_LIVE_CLAUDE=1 vitest run test/live-claude.test.ts",
-    "test:live-codex": "HMR_LIVE_CODEX=1 vitest run test/live-codex.test.ts",
+    "test:live-claude": "SMR_LIVE_CLAUDE=1 vitest run test/live-claude.test.ts",
+    "test:live-codex": "SMR_LIVE_CODEX=1 vitest run test/live-codex.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:native": "CLANG_MODULE_CACHE_PATH=\"$PWD/.build/swift-module-cache\" SWIFTPM_MODULECACHE_OVERRIDE=\"$PWD/.build/swift-module-cache\" swift test --disable-sandbox --package-path macos/HarnessModelRouterApp --scratch-path .build/macos-swift-tests"
+    "test:native": "CLANG_MODULE_CACHE_PATH=\"$PWD/.build/swift-module-cache\" SWIFTPM_MODULECACHE_OVERRIDE=\"$PWD/.build/swift-module-cache\" swift test --disable-sandbox --package-path macos/SubagentModelRouterApp --scratch-path .build/macos-swift-tests"
   },
   "engines": {
     "node": ">=20"

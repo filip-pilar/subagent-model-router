@@ -1,6 +1,6 @@
-# Harness Model Router
+# Subagent Model Router
 
-Harness Model Router is a native Apple Silicon menu-bar app and localhost gateway for routing Claude Code and Codex subagents to different protocol-compatible models and endpoints.
+Subagent Model Router is a native Apple Silicon menu-bar app and localhost gateway for routing Claude Code and Codex subagents to different protocol-compatible models and endpoints.
 
 Parent requests, unknown agents, disabled routes, and routes without a usable destination pass through to their original model and upstream. The router does not translate protocols: Claude routes require an Anthropic Messages-compatible endpoint, while Codex routes require an OpenAI Responses-compatible endpoint.
 
@@ -17,7 +17,7 @@ Build and open the ad-hoc-signed app:
 ```sh
 npm install
 npm run build:macos
-open "dist/Harness Model Router.app"
+open "dist/Subagent Model Router.app"
 ```
 
 Then:
@@ -29,7 +29,7 @@ Then:
 
 The app never installs Claude Code or Codex. Harness configuration changes only after **Set Up Routing** is clicked, and each harness can be restored independently. See [Using the macOS app](docs/USING_THE_APP.md) for the complete setup, removal, conflict, and troubleshooting guide.
 
-The app owns the gateway on fixed loopback address `127.0.0.1:9476`. Its state and helper live under `~/.local/share/harness-model-router/`.
+The app owns the gateway on fixed loopback address `127.0.0.1:9476`. Its state and helper live under `~/.local/share/subagent-model-router/`.
 
 ## How routing works
 
@@ -49,7 +49,7 @@ Routes that require readable Codex V1 multi-agent metadata can enable `requiredM
 
 ## Configuration and CLI
 
-The app and CLI share `~/.local/share/harness-model-router/config.json`. The version 2 schema uses named, reusable destinations. This abridged example shows the route shape; use the app or `init` command to create a complete configuration:
+The app and CLI share `~/.local/share/subagent-model-router/config.json`. The version 2 schema uses named, reusable destinations. This abridged example shows the route shape; use the app or `init` command to create a complete configuration:
 
 ```json
 {
@@ -89,6 +89,8 @@ The app and CLI share `~/.local/share/harness-model-router/config.json`. The ver
 
 Version 1 inline-upstream configurations migrate automatically. A deleted destination may leave a visible broken route so the route can be repaired or removed later.
 
+Installations created as Harness Model Router migrate automatically on first launch. The app moves the legacy data directory, rewrites its owned Claude and Codex hooks and provider block, preserves restoration state, and removes the superseded helper after migration.
+
 The app does not store provider secrets. An advanced route may reference an environment variable:
 
 ```json
@@ -115,6 +117,8 @@ node dist/cli.js start
 
 Run `node dist/cli.js --help` for setup, removal, route, catalog, and lifecycle commands. Discovery used by the app and CLI includes built-in agents, global user agents, and global Claude plugin agents; it does not include project-specific agents.
 
+Environment variables use the `SMR_` prefix. The previous `HMR_` names remain accepted as deprecated aliases for compatibility.
+
 ## Restoration and conflicts
 
 Setup is idempotent, avoids duplicate hooks, writes atomically, and preserves unrelated JSON, TOML, agent, and catalog fields. Restoration state records only the router-owned values and hashes required to undo those changes.
@@ -131,7 +135,7 @@ Run deterministic TypeScript, packaging, and native checks:
 npm run check
 npm run test:native
 npm run build:macos
-codesign --verify --deep --strict --verbose=2 "dist/Harness Model Router.app"
+codesign --verify --deep --strict --verbose=2 "dist/Subagent Model Router.app"
 ```
 
 Optional live CLI checks use temporary homes and do not modify real Claude or Codex configuration:
@@ -145,7 +149,7 @@ npm run test:gateway
 With LLM Gateway already running, the real Claude parent-plus-Explore flow can also be verified through the helper bundled in the built app:
 
 ```sh
-HMR_LIVE_BUNDLED_HELPER_LLM_GATEWAY=1 \
+SMR_LIVE_BUNDLED_HELPER_LLM_GATEWAY=1 \
   npx vitest run test/live-bundled-helper-llm-gateway.test.ts
 ```
 

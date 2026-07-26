@@ -15,9 +15,9 @@ enum RouterReadiness {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   http.statusCode == 200,
-                  http.value(forHTTPHeaderField: "x-harness-model-router") == "1" else { return nil }
+                  http.value(forHTTPHeaderField: "x-subagent-model-router") == "1" else { return nil }
             let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
-            return snapshot.ready && snapshot.service == "harness-model-router" ? snapshot : nil
+            return snapshot.ready && snapshot.service == "subagent-model-router" ? snapshot : nil
         } catch { return nil }
     }
 }

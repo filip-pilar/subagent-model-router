@@ -1,6 +1,6 @@
-# Using Harness Model Router
+# Using Subagent Model Router
 
-Harness Model Router changes which model a configured Claude Code or Codex subagent uses. Parent requests and unconfigured agents continue to use their original model and endpoint.
+Subagent Model Router changes which model a configured Claude Code or Codex subagent uses. Parent requests and unconfigured agents continue to use their original model and endpoint.
 
 The app uses one global configuration for the Mac. It discovers built-in agents, global user agents, and global Claude plugin agents. Project-specific agents are intentionally ignored.
 
@@ -65,7 +65,7 @@ The app surgically updates the global Claude settings file, normally `~/.claude/
 - one owned `SubagentStart` hook is added; and
 - one owned `SubagentStop` hook is added.
 
-Unrelated settings and hooks are preserved. The hooks call the helper at its stable private path under `~/.local/share/harness-model-router/`.
+Unrelated settings and hooks are preserved. The hooks call the helper at its stable private path under `~/.local/share/subagent-model-router/`.
 
 ### What Codex setup changes
 
@@ -116,7 +116,7 @@ Port `9476` may already be occupied. Stop the other process, then start the rout
 
 ### A newly created agent is missing
 
-Quit and reopen Harness Model Router to refresh global agent discovery. Project-specific agents are not supported.
+Quit and reopen Subagent Model Router to refresh global agent discovery. Project-specific agents are not supported.
 
 ### An external config edit is invalid
 
@@ -128,4 +128,4 @@ Read the complete conflict list before forcing restoration. If you want to prese
 
 ### Reveal the configuration
 
-Open **Manage… → Advanced → Reveal Config in Finder**. The default path is `~/.local/share/harness-model-router/config.json`.
+Open **Manage… → Advanced → Reveal Config in Finder**. The default path is `~/.local/share/subagent-model-router/config.json`.

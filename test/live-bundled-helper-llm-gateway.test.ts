@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 import { defaultConfig, saveConfig } from "../src/config.js";
 import { temporaryRoot, writeJson } from "./helpers.js";
 
-const GATEWAY_CLAUDE = process.env.HMR_LLM_GATEWAY_CLAUDE_URL ?? "http://127.0.0.1:4317/claude";
-const ENTITLED_MODEL = process.env.HMR_LLM_GATEWAY_MODEL ?? "swe-1-6-slow";
-const live = process.env.HMR_LIVE_BUNDLED_HELPER_LLM_GATEWAY === "1";
+const GATEWAY_CLAUDE = process.env.SMR_LLM_GATEWAY_CLAUDE_URL ?? process.env.HMR_LLM_GATEWAY_CLAUDE_URL ?? "http://127.0.0.1:4317/claude";
+const ENTITLED_MODEL = process.env.SMR_LLM_GATEWAY_MODEL ?? process.env.HMR_LLM_GATEWAY_MODEL ?? "swe-1-6-slow";
+const live = (process.env.SMR_LIVE_BUNDLED_HELPER_LLM_GATEWAY ?? process.env.HMR_LIVE_BUNDLED_HELPER_LLM_GATEWAY) === "1";
 
 describe("app-bundled helper with live LLM Gateway", () => {
   (live ? it : it.skip)("runs a real Claude parent and Explore child through the bundled helper", async () => {
@@ -18,7 +18,7 @@ describe("app-bundled helper with live LLM Gateway", () => {
     const project = resolve(root, "project");
     const routerDirectory = resolve(root, "router");
     const configPath = resolve(routerDirectory, "config.json");
-    const helper = resolve(process.cwd(), "dist/Harness Model Router.app/Contents/Resources/harness-model-router-helper");
+    const helper = resolve(process.cwd(), "dist/Subagent Model Router.app/Contents/Resources/subagent-model-router-helper");
     await mkdir(claudeConfig, { recursive: true });
     await mkdir(project, { recursive: true });
     const nonce = `BUNDLED_CHILD_${randomUUID().slice(0, 8)}`;
@@ -31,7 +31,7 @@ describe("app-bundled helper with live LLM Gateway", () => {
     config.routes.claude.Explore = { enabled: true, model: ENTITLED_MODEL, upstream: { baseUrl: GATEWAY_CLAUDE, protocol: "anthropic-messages" } };
     await saveConfig(configPath, config);
 
-    const isolatedEnv = { ...sanitizedEnv(), HMR_HOME: home };
+    const isolatedEnv = { ...sanitizedEnv(), SMR_HOME: home };
     const setup = await run(helper, ["--config", configPath, "setup", "claude", "--helper-path", helper, "--json"], { cwd: project, env: isolatedEnv, timeoutMs: 30_000 });
     expect(setup.stderr).toBe("");
     const settings = JSON.parse(await readFile(resolve(claudeConfig, "settings.json"), "utf8")) as Record<string, any>;

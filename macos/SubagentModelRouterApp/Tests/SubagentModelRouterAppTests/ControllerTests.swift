@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 import Testing
-@testable import HarnessModelRouterApp
+@testable import SubagentModelRouterApp
 
 private final class HelperStub: @unchecked Sendable {
     private let lock = NSLock()
@@ -134,7 +134,7 @@ private struct Fixture: @unchecked Sendable {
 
 private func makeFixture() throws -> Fixture {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
-    let data = root.appending(path: ".local/share/harness-model-router", directoryHint: .isDirectory)
+    let data = root.appending(path: ".local/share/subagent-model-router", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
     let paths = AppPaths(dataDirectory: data, config: data.appending(path: "config.json"), helper: data.appending(path: "bin/helper"), log: data.appending(path: "menu-app.log"))
     let config = RouterConfig(

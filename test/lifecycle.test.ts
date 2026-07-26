@@ -40,7 +40,7 @@ describe("installation lifecycle", () => {
     expect(await readFile(agentPath, "utf8")).toContain('model = "router-reviewer"');
     const installedConfig = await readFile(codexConfig, "utf8");
     expect(installedConfig).toContain('unrelated = "keep"');
-    expect(installedConfig).toContain("[model_providers.harness-model-router]");
+    expect(installedConfig).toContain("[model_providers.subagent-model-router]");
     expect(installedConfig).toContain('env_key = "PRIVATE_API_KEY"');
     const overlay = JSON.parse(await readFile((await loadConfig(path)).harnesses.codex.overlayCatalogPath!, "utf8"));
     expect(overlay.models.find((model: any) => model.slug === "router-reviewer")).toMatchObject({ visibility: "hide", multi_agent_version: "v1" });
@@ -54,7 +54,7 @@ describe("installation lifecycle", () => {
     const restoredConfig = await readFile(codexConfig, "utf8");
     expect(restoredConfig).toContain('model_provider = "private"');
     expect(restoredConfig).toContain('unrelated = "keep"');
-    expect(restoredConfig).not.toContain("harness-model-router:start");
+    expect(restoredConfig).not.toContain("subagent-model-router:start");
   });
 
   it("detects later custom-agent edits and only force restores them explicitly", async () => {

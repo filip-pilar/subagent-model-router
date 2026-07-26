@@ -9,7 +9,7 @@ import { createGateway } from "../src/gateway.js";
 import { installIntegration } from "../src/lifecycle.js";
 import { captureServer, close, temporaryRoot, type CaptureResponse } from "./helpers.js";
 
-const live = process.env.HMR_LIVE_CLAUDE === "1" && hasClaude();
+const live = (process.env.SMR_LIVE_CLAUDE ?? process.env.HMR_LIVE_CLAUDE) === "1" && hasClaude();
 const servers: Server[] = [];
 afterEach(async () => { while (servers.length) await close(servers.pop()!); });
 
@@ -21,7 +21,7 @@ describe("live Claude Code integration", () => {
     const project = resolve(root, "project");
     await mkdir(claudeConfig, { recursive: true });
     await mkdir(project, { recursive: true });
-    const nonce = `HMR_${randomUUID().replaceAll("-", "")}`;
+    const nonce = `SMR_${randomUUID().replaceAll("-", "")}`;
     const parentModel = "claude-sonnet-4-6";
     const childModel = "independent-claude-wire";
 
@@ -59,7 +59,7 @@ describe("live Claude Code integration", () => {
     servers.push(gateway.server);
 
     const cliPath = resolve(process.cwd(), "dist/cli.js");
-    expect(await readFile(cliPath, "utf8")).toContain("harness-model-router");
+    expect(await readFile(cliPath, "utf8")).toContain("subagent-model-router");
     const installed = await installIntegration(configPath, { home, project, cliPath, nodePath: process.execPath });
     expect(installed.conflicts).toEqual([]);
 

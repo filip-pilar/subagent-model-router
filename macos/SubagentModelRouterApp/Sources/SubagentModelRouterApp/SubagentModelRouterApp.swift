@@ -1,16 +1,16 @@
 import SwiftUI
 
 @main
-struct HarnessModelRouterMenuApp: App {
+struct SubagentModelRouterMenuApp: App {
     @StateObject private var controller = RouterController()
 
     var body: some Scene {
-        MenuBarExtra("Harness Model Router", systemImage: "arrow.triangle.branch") {
+        MenuBarExtra("Subagent Model Router", systemImage: "arrow.triangle.branch") {
             RouterMenu(controller: controller)
         }
         .menuBarExtraStyle(.window)
 
-        Window("Harness Model Router", id: "routes") {
+        Window("Subagent Model Router", id: "routes") {
             ManagementView(controller: controller)
         }
         .defaultSize(width: 780, height: 540)
@@ -42,7 +42,7 @@ private struct RouterMenu: View {
                 Image(systemName: controller.isRunning ? "arrow.triangle.branch" : "exclamationmark.triangle")
                     .foregroundStyle(controller.isRunning ? .green : .secondary)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Harness Model Router").font(.headline)
+                    Text("Subagent Model Router").font(.headline)
                     Text(statusText).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -92,7 +92,7 @@ private struct RouterMenu: View {
         }
         .frame(width: 410)
         .background(.regularMaterial)
-        .confirmationDialog("Reset Harness Model Router?", isPresented: $confirmReset, titleVisibility: .visible) {
+        .confirmationDialog("Reset Subagent Model Router?", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("Reset Everything", role: .destructive) { controller.reset() }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This restores router-owned Claude and Codex changes and deletes all destinations and routes.") }

@@ -6,13 +6,13 @@ import { defaultConfig, saveConfig } from "../src/config.js";
 import type { RouterConfig } from "../src/types.js";
 
 export async function temporaryRoot(): Promise<string> {
-  return mkdtemp(resolve(tmpdir(), "harness-model-router-test-"));
+  return mkdtemp(resolve(tmpdir(), "subagent-model-router-test-"));
 }
 
 export async function testConfig(root: string): Promise<{ config: RouterConfig; path: string }> {
   const config = defaultConfig(root);
   config.gateway.port = 9476;
-  const path = resolve(root, ".harness-model-router/config.json");
+  const path = resolve(root, ".subagent-model-router/config.json");
   await saveConfig(path, config);
   return { config, path };
 }

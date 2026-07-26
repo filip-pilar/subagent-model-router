@@ -11,8 +11,12 @@ import { loadConfig, saveConfig } from "./config.js";
 import type { DiscoveredAgent, RouterConfig } from "./types.js";
 
 const execFileAsync = promisify(execFile);
-const BLOCK_START = "# harness-model-router:start";
-const BLOCK_END = "# harness-model-router:end";
+const BLOCK_START = "# subagent-model-router:start";
+const BLOCK_END = "# subagent-model-router:end";
+const LEGACY_BLOCK_START = "# harness-model-router:start";
+const LEGACY_BLOCK_END = "# harness-model-router:end";
+const LEGACY_SERVICE_NAME = "harness-model-router";
+const SERVICE_NAME = "subagent-model-router";
 
 interface ScalarMutation { key: string; originalLine?: string; installedLine: string }
 interface JsonMutation {
@@ -114,6 +118,147 @@ function fileURLPathFallback(): string {
 export async function integrationStatus(configPath: string): Promise<IntegrationStatus> {
   const state = await readState(installStatePath(configPath));
   return { claude: Boolean(state.claude), codex: Boolean(state.codexHooks || state.codexConfig) };
+}
+
+export async function migrateLegacyIntegration(configPath: string, legacyDataDirectory: string, dataDirectory: string): Promise<boolean> {
+  if (!await exists(configPath)) return false;
+  const config = await loadConfig(configPath);
+  const statePath = installStatePath(configPath);
+  const state = await readState(statePath);
+  const writes = new Map<string, { original: string; migrated: string }>();
+  let configChanged = false;
+  let stateChanged = false;
+
+  const migrateDataPath = (value: string | undefined): string | undefined => {
+    if (!value) return value;
+    const migrated = value.replaceAll(legacyDataDirectory, dataDirectory);
+    if (migrated !== value) configChanged = true;
+    return migrated;
+  };
+  const sourceCatalogPath = migrateDataPath(config.harnesses.codex.sourceCatalogPath);
+  const overlayCatalogPath = migrateDataPath(config.harnesses.codex.overlayCatalogPath);
+  if (sourceCatalogPath) config.harnesses.codex.sourceCatalogPath = sourceCatalogPath;
+  else delete config.harnesses.codex.sourceCatalogPath;
+  if (overlayCatalogPath) config.harnesses.codex.overlayCatalogPath = overlayCatalogPath;
+  else delete config.harnesses.codex.overlayCatalogPath;
+
+  const migrateHookValue = (value: string): string => value
+    .replaceAll(legacyDataDirectory, dataDirectory)
+    .replaceAll(`${LEGACY_SERVICE_NAME}-helper`, `${SERVICE_NAME}-helper`);
+  const migrateOwnedValue = (value: string): string => migrateHookValue(value)
+    .replaceAll(LEGACY_SERVICE_NAME, SERVICE_NAME);
+
+  for (const mutation of [state.claude, state.codexHooks]) {
+    if (!mutation) continue;
+    const original = await readFile(mutation.path, "utf8");
+    const document = JSON.parse(original) as Record<string, any>;
+    const migratedCommands = mutation.hookCommands.map(migrateHookValue);
+    let documentChanged = false;
+    for (let index = 0; index < mutation.hookCommands.length; index += 1) {
+      const legacyCommand = mutation.hookCommands[index]!;
+      const migratedCommand = migratedCommands[index]!;
+      if (legacyCommand === migratedCommand) continue;
+      if (replaceHookCommand(document.hooks, legacyCommand, migratedCommand)) {
+        documentChanged = true;
+      } else if (!hookExists(document.hooks ?? {}, migratedCommand)) {
+        throw new Error(`${mutation.path}: legacy router hook changed before it could be migrated`);
+      }
+    }
+    if (documentChanged) writes.set(mutation.path, { original, migrated: `${JSON.stringify(document, null, 2)}\n` });
+    if (migratedCommands.some((command, index) => command !== mutation.hookCommands[index])) {
+      mutation.hookCommands = migratedCommands;
+      stateChanged = true;
+    }
+  }
+
+  if (state.codexConfig) {
+    const mutation = state.codexConfig;
+    const original = await readFile(mutation.path, "utf8");
+    let migrated = original;
+    const legacyBlock = extractOwnedBlockWithMarkers(migrated, LEGACY_BLOCK_START, LEGACY_BLOCK_END);
+    if (legacyBlock) {
+      if (hash(legacyBlock) !== mutation.blockHash) {
+        throw new Error(`${mutation.path}: legacy Codex provider block changed before it could be migrated`);
+      }
+      const migratedBlock = migrateOwnedValue(legacyBlock);
+      migrated = migrated.replace(legacyBlock, migratedBlock);
+      mutation.blockHash = hash(migratedBlock);
+      stateChanged = true;
+    } else {
+      const currentBlock = extractOwnedBlock(migrated);
+      if (!currentBlock || hash(currentBlock) !== mutation.blockHash) {
+        throw new Error(`${mutation.path}: owned Codex provider block is missing or changed`);
+      }
+    }
+    for (const scalar of mutation.scalars) {
+      const installedLine = scalar.key === "model_provider"
+        ? migrateOwnedValue(scalar.installedLine)
+        : migrateHookValue(scalar.installedLine);
+      const originalLine = scalar.originalLine?.replaceAll(legacyDataDirectory, dataDirectory);
+      if (installedLine !== scalar.installedLine) {
+        const lines = migrated.split(/\r?\n/);
+        const legacyIndex = lines.findIndex((line) => line.trim() === scalar.installedLine.trim());
+        const currentIndex = lines.findIndex((line) => line.trim() === installedLine.trim());
+        if (legacyIndex >= 0) lines[legacyIndex] = installedLine;
+        else if (currentIndex < 0) throw new Error(`${mutation.path}: ${scalar.key} changed before it could be migrated`);
+        migrated = lines.join("\n");
+        scalar.installedLine = installedLine;
+        stateChanged = true;
+      }
+      if (originalLine !== scalar.originalLine) {
+        if (originalLine === undefined) delete scalar.originalLine;
+        else scalar.originalLine = originalLine;
+        stateChanged = true;
+      }
+    }
+    if (migrated !== original) writes.set(mutation.path, { original, migrated });
+  }
+
+  if (configChanged) {
+    writes.set(configPath, {
+      original: await readFile(configPath, "utf8"),
+      migrated: `${JSON.stringify(config, null, 2)}\n`,
+    });
+  }
+  if (stateChanged && await exists(statePath)) {
+    writes.set(statePath, {
+      original: await readFile(statePath, "utf8"),
+      migrated: `${JSON.stringify(state, null, 2)}\n`,
+    });
+  }
+
+  const applied: Array<[string, string]> = [];
+  try {
+    for (const [path, contents] of writes) {
+      await atomicWriteFile(path, contents.migrated, 0o600);
+      applied.push([path, contents.original]);
+    }
+  } catch (error) {
+    for (const [path, original] of applied.reverse()) await atomicWriteFile(path, original, 0o600);
+    throw error;
+  }
+
+  const legacyHelper = resolve(dataDirectory, "bin", `${LEGACY_SERVICE_NAME}-helper`);
+  if (await exists(legacyHelper)) await unlink(legacyHelper);
+  return writes.size > 0;
+}
+
+function replaceHookCommand(hooks: Record<string, any> | undefined, legacyCommand: string, migratedCommand: string): boolean {
+  if (!hooks) return false;
+  let changed = false;
+  for (const groups of Object.values(hooks)) {
+    if (!Array.isArray(groups)) continue;
+    for (const group of groups) {
+      if (!Array.isArray(group?.hooks)) continue;
+      for (const hook of group.hooks) {
+        if (hook?.command === legacyCommand) {
+          hook.command = migratedCommand;
+          changed = true;
+        }
+      }
+    }
+  }
+  return changed;
 }
 
 export async function uninstallHarnessIntegration(configPath: string, harness: "claude" | "codex", force = false): Promise<LifecycleResult> {
@@ -330,16 +475,16 @@ async function installCodexConfig(path: string, config: RouterConfig, prior: Cod
   const originalBase = typeof provider.base_url === "string" ? provider.base_url : config.harnesses.codex.originalUpstream.baseUrl;
   assertCredentialFreeUrl(originalBase, `${path} provider ${originalProviderName} base_url`);
   config.harnesses.codex.originalUpstream.baseUrl = originalBase;
-  provider.name = "harness-model-router";
+  provider.name = "subagent-model-router";
   provider.base_url = `http://${config.gateway.host}:${config.gateway.port}/codex/v1`;
   provider.wire_api = "responses";
   const scalars = prior?.scalars ?? [];
-  const modelProvider = setTopLevelScalar(content, "model_provider", 'model_provider = "harness-model-router"', scalars);
+  const modelProvider = setTopLevelScalar(content, "model_provider", 'model_provider = "subagent-model-router"', scalars);
   content = modelProvider.content;
   const catalogPath = config.harnesses.codex.overlayCatalogPath!;
   const catalog = setTopLevelScalar(content, "model_catalog_json", `model_catalog_json = ${JSON.stringify(catalogPath)}`, scalars);
   content = catalog.content;
-  const serialized = stringifyToml({ model_providers: { "harness-model-router": provider } }).trim();
+  const serialized = stringifyToml({ model_providers: { "subagent-model-router": provider } }).trim();
   const block = `${BLOCK_START}\n${serialized}\n${BLOCK_END}`;
   content = `${content.trimEnd()}\n\n${block}\n`;
   await atomicWriteFile(path, content, 0o600);
@@ -463,7 +608,11 @@ function selectCodexAgent(agents: DiscoveredAgent[], name: string): DiscoveredAg
 }
 
 function extractOwnedBlock(content: string): string | undefined {
-  return new RegExp(`${escapeRegex(BLOCK_START)}[\\s\\S]*?${escapeRegex(BLOCK_END)}`).exec(content)?.[0];
+  return extractOwnedBlockWithMarkers(content, BLOCK_START, BLOCK_END);
+}
+
+function extractOwnedBlockWithMarkers(content: string, start: string, end: string): string | undefined {
+  return new RegExp(`${escapeRegex(start)}[\\s\\S]*?${escapeRegex(end)}`).exec(content)?.[0];
 }
 
 function removeOwnedBlock(content: string): string {

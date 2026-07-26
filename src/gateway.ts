@@ -62,10 +62,10 @@ async function handleRequest(
   }
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
   if (requestUrl.pathname === "/__router/status" || requestUrl.pathname === "/__router/readiness") {
-    response.setHeader("x-harness-model-router", "1");
+    response.setHeader("x-subagent-model-router", "1");
     return void json(response, 200, {
       ready: true,
-      service: "harness-model-router",
+      service: "subagent-model-router",
       version: ROUTER_VERSION,
       mappings: identities.size,
       harnesses: { claude: config.harnesses.claude.enabled, codex: config.harnesses.codex.enabled },

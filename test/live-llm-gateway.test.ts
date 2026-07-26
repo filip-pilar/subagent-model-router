@@ -9,11 +9,11 @@ import { createGateway } from "../src/gateway.js";
 import { installIntegration } from "../src/lifecycle.js";
 import { close, temporaryRoot, writeJson } from "./helpers.js";
 
-const GATEWAY_OPENAI = process.env.HMR_LLM_GATEWAY_OPENAI_URL ?? "http://127.0.0.1:4317/openai/v1";
-const GATEWAY_CLAUDE = process.env.HMR_LLM_GATEWAY_CLAUDE_URL ?? "http://127.0.0.1:4317/claude";
-const ENTITLED_MODEL = process.env.HMR_LLM_GATEWAY_MODEL ?? "swe-1-6-slow";
-const DENIED_MODEL = process.env.HMR_LLM_GATEWAY_DENIED_MODEL ?? "swe-1-7-lightning";
-const live = process.env.HMR_LIVE_LLM_GATEWAY === "1";
+const GATEWAY_OPENAI = process.env.SMR_LLM_GATEWAY_OPENAI_URL ?? process.env.HMR_LLM_GATEWAY_OPENAI_URL ?? "http://127.0.0.1:4317/openai/v1";
+const GATEWAY_CLAUDE = process.env.SMR_LLM_GATEWAY_CLAUDE_URL ?? process.env.HMR_LLM_GATEWAY_CLAUDE_URL ?? "http://127.0.0.1:4317/claude";
+const ENTITLED_MODEL = process.env.SMR_LLM_GATEWAY_MODEL ?? process.env.HMR_LLM_GATEWAY_MODEL ?? "swe-1-6-slow";
+const DENIED_MODEL = process.env.SMR_LLM_GATEWAY_DENIED_MODEL ?? process.env.HMR_LLM_GATEWAY_DENIED_MODEL ?? "swe-1-7-lightning";
+const live = (process.env.SMR_LIVE_LLM_GATEWAY ?? process.env.HMR_LIVE_LLM_GATEWAY) === "1";
 const servers: Server[] = [];
 
 interface UpstreamCapture { url: string; body: Record<string, any>; headers: Record<string, string>; responseStatus?: number; responseContentType?: string }
@@ -47,7 +47,7 @@ describe("live LLM Gateway integration", () => {
     await listen(gateway.server);
     servers.push(gateway.server);
     const cliPath = resolve(process.cwd(), "dist/cli.js");
-    expect(await readFile(cliPath, "utf8")).toContain("harness-model-router");
+    expect(await readFile(cliPath, "utf8")).toContain("subagent-model-router");
     expect((await installIntegration(configPath, { home, project, cliPath, nodePath: process.execPath })).conflicts).toEqual([]);
     console.info(`LIVE_DEVIN_CLAUDE_ROOT=${root}`);
 

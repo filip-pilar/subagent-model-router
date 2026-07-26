@@ -9,7 +9,7 @@ import { defaultConfig, saveConfig } from "../src/config.js";
 import { installIntegration } from "../src/lifecycle.js";
 import { captureServer, close, temporaryRoot, writeJson, type Capture } from "./helpers.js";
 
-const live = process.env.HMR_LIVE_CODEX === "1" && hasCodex();
+const live = (process.env.SMR_LIVE_CODEX ?? process.env.HMR_LIVE_CODEX) === "1" && hasCodex();
 const servers: Server[] = [];
 afterEach(async () => { while (servers.length) await close(servers.pop()!); });
 
@@ -21,7 +21,7 @@ describe("live Codex V1 integration", () => {
     const project = resolve(root, "project");
     await mkdir(codexHome, { recursive: true });
     await mkdir(project, { recursive: true });
-    const nonce = `HMR_${randomUUID().replaceAll("-", "")}`;
+    const nonce = `SMR_${randomUUID().replaceAll("-", "")}`;
     const sourceCatalog = JSON.parse(execFileSync("codex", ["debug", "models", "--bundled"], { encoding: "utf8", env: { ...process.env, CODEX_HOME: codexHome } })) as { models: Array<Record<string, any>> };
     const parentModel = String(sourceCatalog.models[0]?.slug);
     expect(parentModel).toBeTruthy();
@@ -64,7 +64,7 @@ describe("live Codex V1 integration", () => {
 
     await writeFile(resolve(codexHome, "config.toml"), `model = ${JSON.stringify(parentModel)}\nmodel_provider = "original"\n\n[model_providers.original]\nname = "Original mock"\nbase_url = ${JSON.stringify(`${original.url}/v1`)}\nenv_key = "CODEX_LIVE_KEY"\nwire_api = "responses"\n\n[features]\nmulti_agent = true\nmulti_agent_v2 = false\nremote_plugin = false\nplugins = false\napps = false\n`);
     const cliPath = resolve(process.cwd(), "dist/cli.js");
-    expect(await readFile(cliPath, "utf8")).toContain("harness-model-router");
+    expect(await readFile(cliPath, "utf8")).toContain("subagent-model-router");
     const installed = await installIntegration(configPath, { home, project, cliPath, nodePath: process.execPath });
     expect(installed.conflicts).toEqual([]);
 

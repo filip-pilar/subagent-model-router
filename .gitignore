@@ -4,4 +4,4 @@ dist/
 coverage/
 *.log
 .DS_Store
-.harness-model-router/
+.subagent-model-router/

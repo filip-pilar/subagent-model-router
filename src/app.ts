@@ -1,4 +1,4 @@
-import { access, readFile, readdir, stat, unlink } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rmdir, stat, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
@@ -8,10 +8,12 @@ import { parse as parseToml } from "smol-toml";
 import { defaultGlobalConfig, loadConfig, parseConfig, saveConfig } from "./config.js";
 import { discover } from "./discovery.js";
 import { atomicWriteFile, exists } from "./files.js";
-import { installIntegration, integrationStatus, uninstallHarnessIntegration, uninstallIntegration, type InstallOptions } from "./lifecycle.js";
+import { installIntegration, integrationStatus, migrateLegacyIntegration, uninstallHarnessIntegration, uninstallIntegration, type InstallOptions } from "./lifecycle.js";
 import type { Harness, RouterConfig } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+const DATA_DIRECTORY_NAME = "subagent-model-router";
+const LEGACY_DATA_DIRECTORY_NAME = "harness-model-router";
 
 export interface AppPaths {
   dataDirectory: string;
@@ -28,17 +30,27 @@ export interface HarnessDetection {
 }
 
 export function appPaths(home = homedir()): AppPaths {
-  const dataDirectory = resolve(home, ".local/share/harness-model-router");
+  const dataDirectory = resolve(home, ".local/share", DATA_DIRECTORY_NAME);
   return {
     dataDirectory,
     config: resolve(dataDirectory, "config.json"),
-    helper: resolve(dataDirectory, "bin/harness-model-router-helper"),
+    helper: resolve(dataDirectory, "bin/subagent-model-router-helper"),
     log: resolve(dataDirectory, "menu-app.log"),
   };
 }
 
 export async function ensureGlobalConfig(path: string, _home = homedir()): Promise<RouterConfig> {
-  void _home;
+  if (resolve(path) === appPaths(_home).config) {
+    const legacyDataDirectory = resolve(_home, ".local/share", LEGACY_DATA_DIRECTORY_NAME);
+    const moves: LegacyMove[] = [];
+    try {
+      await mergeLegacyDataDirectory(legacyDataDirectory, dirname(path), moves);
+      await migrateLegacyIntegration(path, legacyDataDirectory, dirname(path));
+    } catch (error) {
+      await rollbackLegacyMoves(moves);
+      throw error;
+    }
+  }
   if (!await exists(path)) {
     const config = defaultGlobalConfig(dirname(path));
     await saveConfig(path, config);
@@ -48,6 +60,40 @@ export async function ensureGlobalConfig(path: string, _home = homedir()): Promi
   const config = parseConfig(raw);
   if (isRecordVersion(raw) !== 2) await saveConfig(path, config);
   return config;
+}
+
+interface LegacyMove { source: string; target: string }
+
+async function mergeLegacyDataDirectory(source: string, target: string, moves: LegacyMove[]): Promise<void> {
+  if (!await exists(source)) return;
+  if (!await exists(target)) {
+    await mkdir(dirname(target), { recursive: true });
+    await rename(source, target);
+    moves.push({ source, target });
+    return;
+  }
+  await mkdir(target, { recursive: true });
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const from = resolve(source, entry.name);
+    const to = resolve(target, entry.name);
+    if (!await exists(to)) {
+      await rename(from, to);
+      moves.push({ source: from, target: to });
+    } else if (entry.isDirectory() && (await stat(to)).isDirectory()) {
+      await mergeLegacyDataDirectory(from, to, moves);
+    } else {
+      throw new Error(`Cannot migrate legacy router data because ${to} already exists`);
+    }
+  }
+  await rmdir(source);
+}
+
+async function rollbackLegacyMoves(moves: LegacyMove[]): Promise<void> {
+  for (const move of [...moves].reverse()) {
+    if (!await exists(move.target)) continue;
+    await mkdir(dirname(move.source), { recursive: true });
+    await rename(move.target, move.source);
+  }
 }
 
 function isRecordVersion(value: unknown): unknown {
@@ -203,7 +249,8 @@ export async function resetEverything(configPath: string, _home = homedir(), for
 async function findExecutable(name: string, home: string): Promise<string | undefined> {
   const pathCandidates = (process.env.PATH ?? "").split(":").filter(Boolean).map((directory) => resolve(directory, name));
   const homeCandidate = resolve(home, ".local/bin", name);
-  const candidates = process.env.HMR_TEST_HOME_ONLY === "1" ? [homeCandidate] : [homeCandidate, `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, ...pathCandidates];
+  const testHomeOnly = process.env.SMR_TEST_HOME_ONLY ?? process.env.HMR_TEST_HOME_ONLY;
+  const candidates = testHomeOnly === "1" ? [homeCandidate] : [homeCandidate, `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, ...pathCandidates];
   for (const candidate of [...new Set(candidates)]) {
     try { await access(candidate, constants.X_OK); return candidate; } catch { /* keep looking */ }
   }
@@ -212,7 +259,8 @@ async function findExecutable(name: string, home: string): Promise<string | unde
 
 async function findApplication(name: string, home: string): Promise<string | undefined> {
   const homeCandidate = resolve(home, "Applications", name);
-  const candidates = process.env.HMR_TEST_HOME_ONLY === "1" ? [homeCandidate] : [`/Applications/${name}`, homeCandidate];
+  const testHomeOnly = process.env.SMR_TEST_HOME_ONLY ?? process.env.HMR_TEST_HOME_ONLY;
+  const candidates = testHomeOnly === "1" ? [homeCandidate] : [`/Applications/${name}`, homeCandidate];
   for (const candidate of candidates) if (await exists(candidate)) return candidate;
   return undefined;
 }
