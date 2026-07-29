@@ -9,14 +9,14 @@ describe("desktop configuration", () => {
     legacy.routes.claude.Explore = {
       enabled: true,
       model: "child",
-      upstream: { baseUrl: "http://127.0.0.1:4317/claude", protocol: "anthropic-messages", authorization: { env: "LOCAL_KEY" } },
+      upstream: { baseUrl: "https://provider.example/claude", protocol: "anthropic-messages", authorization: { env: "LOCAL_KEY" } },
     };
     const config = parseConfig(migrateConfig(legacy));
     const route = config.routes.claude.Explore!;
     expect(config.version).toBe(2);
-    expect(config.destinations[route.destination]?.anthropicBaseUrl).toBe("http://127.0.0.1:4317/claude");
+    expect(config.destinations[route.destination]?.anthropicBaseUrl).toBe("https://provider.example/claude");
     expect(route.authorization?.env).toBe("LOCAL_KEY");
-    expect(routeUpstream(config, "claude", route)?.baseUrl).toBe("http://127.0.0.1:4317/claude");
+    expect(routeUpstream(config, "claude", route)?.baseUrl).toBe("https://provider.example/claude");
   });
 
   it("keeps dangling destination references valid but resolves them as broken", () => {

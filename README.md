@@ -62,26 +62,26 @@ The app and CLI share `~/.local/share/subagent-model-router/config.json`. The ve
     "maxBodyBytes": 16777216
   },
   "destinations": {
-    "llm-gateway": {
-      "name": "LLM Gateway",
-      "openaiBaseUrl": "http://127.0.0.1:4317/openai/v1",
-      "anthropicBaseUrl": "http://127.0.0.1:4317/claude"
+    "example-provider": {
+      "name": "Example Provider",
+      "openaiBaseUrl": "https://provider.example/openai/v1",
+      "anthropicBaseUrl": "https://provider.example/claude"
     }
   },
   "routes": {
     "claude": {
       "Explore": {
         "enabled": true,
-        "model": "swe-1-6-slow",
-        "destination": "llm-gateway"
+        "model": "example-model",
+        "destination": "example-provider"
       }
     },
     "codex": {
       "explorer": {
         "enabled": true,
         "alias": "router-explorer",
-        "model": "swe-1-6-slow",
-        "destination": "llm-gateway"
+        "model": "example-model",
+        "destination": "example-provider"
       }
     }
   }
@@ -146,16 +146,6 @@ Optional live CLI checks use temporary homes and do not modify real Claude or Co
 ```sh
 npm run test:live-claude
 npm run test:live-codex
-npm run test:gateway
 ```
-
-With LLM Gateway already running, the real Claude parent-plus-Explore flow can also be verified through the helper bundled in the built app:
-
-```sh
-SMR_LIVE_BUNDLED_HELPER_LLM_GATEWAY=1 \
-  npx vitest run test/live-bundled-helper-llm-gateway.test.ts
-```
-
-The deterministic tests use local mocks. The opt-in LLM Gateway tests contact the configured local gateway and fail rather than silently passing on authentication, entitlement, or rate-limit errors.
 
 Hook and configuration schemas were checked against the official [Codex hooks documentation](https://developers.openai.com/codex/hooks), [Codex subagents documentation](https://developers.openai.com/codex/subagents), [Claude Code hooks reference](https://code.claude.com/docs/en/hooks), and [Claude Code environment variables](https://code.claude.com/docs/en/env-vars).

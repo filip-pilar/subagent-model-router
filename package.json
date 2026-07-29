@@ -41,7 +41,6 @@
     "lint": "eslint . --max-warnings=0",
     "start": "node dist/cli.js start",
     "test": "vitest run",
-    "test:gateway": "npm run build && SMR_LIVE_LLM_GATEWAY=1 vitest run test/live-llm-gateway.test.ts",
     "test:live": "npm run test:live-codex && npm run test:live-claude",
     "test:live-claude": "SMR_LIVE_CLAUDE=1 vitest run test/live-claude.test.ts",
     "test:live-codex": "SMR_LIVE_CODEX=1 vitest run test/live-codex.test.ts",

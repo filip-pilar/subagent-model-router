@@ -58,10 +58,9 @@ For complete macOS packaging changes:
 
 Gateway and packaging tests bind local loopback ports. In restricted environments, obtain loopback permission instead of interpreting `EPERM` timeouts as code failures. Port `9476` must be free for the standalone-helper packaging test.
 
-Live tests are opt-in. Run them only when the relevant CLI or local gateway is available, and preserve their temporary-home isolation:
+Live tests are opt-in. Run them only when the relevant CLI is available, and preserve their temporary-home isolation:
 
 - `npm run test:live-claude`
 - `npm run test:live-codex`
-- `npm run test:gateway`
 
 Update `README.md` or `docs/USING_THE_APP.md` when setup, restoration, configuration, compatibility, requirements, or visible app behavior changes.

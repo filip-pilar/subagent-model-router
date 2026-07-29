@@ -8,10 +8,10 @@
       "maxBodyBytes": 16777216
     },
     "destinations": {
-      "local-both": {
-        "name": "Local Both",
-        "openaiBaseUrl": "http://127.0.0.1:4317/openai/v1",
-        "anthropicBaseUrl": "http://127.0.0.1:4317/claude"
+      "example-provider": {
+        "name": "Example Provider",
+        "openaiBaseUrl": "https://provider.example/openai/v1",
+        "anthropicBaseUrl": "https://provider.example/claude"
       }
     },
     "harnesses": {
@@ -45,7 +45,7 @@
         "Explore": {
           "enabled": true,
           "model": "claude-child",
-          "destination": "local-both",
+          "destination": "example-provider",
           "authorization": {
             "env": "LOCAL_CLAUDE_KEY",
             "header": "X-Api-Key"
@@ -57,7 +57,7 @@
           "enabled": true,
           "alias": "router-explorer",
           "model": "codex-child",
-          "destination": "local-both",
+          "destination": "example-provider",
           "authorization": {
             "env": "LOCAL_CODEX_KEY",
             "header": "Authorization",
