@@ -7,7 +7,7 @@ interface AppStateContract {
   config: unknown;
   integration: { claude: boolean; codex: boolean };
   detection: Record<"claude" | "codex", { detected: boolean; version?: string; cliPath?: string; appPath?: string }>;
-  agents: Array<{ harness: string; name: string; kind: string; path?: string; explicitModel?: string }>;
+  agents: Array<{ harness: string; name: string; kind: string; path?: string; explicitModel?: string; codexV2Eligible?: boolean }>;
   codexParentModel?: string;
 }
 
@@ -20,11 +20,13 @@ describe("helper/app JSON contract", () => {
     expect(config.routes.claude.Explore?.authorization?.header).toBe("X-Api-Key");
     expect(config.routes.codex.explorer).toMatchObject({
       alias: "router-explorer",
-      requiredMultiAgentVersion: "v1",
     });
+    expect(config.routes.codex.explorer?.requiredMultiAgentVersion).toBeUndefined();
+    expect(config.harnesses.codex.originalUpstream.credentialHeaders).toEqual(["Authorization", "X-Original-Auth"]);
     expect(fixture.integration).toEqual({ claude: true, codex: true });
     expect(fixture.detection.codex.appPath).toBe("/Applications/Codex.app");
     expect(fixture.agents.map((agent) => `${agent.harness}:${agent.name}`)).toEqual(["claude:Explore", "codex:explorer"]);
+    expect(fixture.agents[1]?.codexV2Eligible).toBe(true);
     expect(fixture.codexParentModel).toBe("parent-model");
   });
 });

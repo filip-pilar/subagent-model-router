@@ -2,7 +2,7 @@
 
 Subagent Model Router changes which model a configured Claude Code or Codex subagent uses. Parent requests and unconfigured agents continue to use their original model and endpoint.
 
-The app uses one global configuration for the Mac. It discovers built-in agents, global user agents, and global Claude plugin agents. Project-specific agents are intentionally ignored.
+The app uses one global configuration for the Mac and discovers built-in and global user-defined agents.
 
 ## Before you start
 
@@ -47,7 +47,9 @@ Choose:
 - the model slug the destination should receive; and
 - whether the route is enabled.
 
-Codex routes receive a hidden internal alias. Advanced options also expose V1 multi-agent compatibility, parent models, and environment-variable authorization references.
+Codex routes receive a hidden internal alias. Built-in, manually named, and custom-agent files that Codex cannot load as explicit-model roles use Codex V1 and require at least one parent model. Valid global custom roles with an explicit model use Codex V2. The app selects that compatibility mode from the detected agent; setup rejects unsupported combinations rather than silently running the child on its parent model. Advanced options also expose environment-variable authorization references.
+
+If V1 and V2 routes are enabled together, Codex custom-agent spawns should include their `agent_type`. An identity-less mixed-mode spawn is blocked because the router cannot safely distinguish a V2 custom spawn from a V1 spawn that lost its routing identity.
 
 Deleting a destination does not silently delete routes that reference it. Those routes remain visible as broken until repaired or removed.
 
@@ -74,7 +76,7 @@ The app updates global Codex configuration under `~/.codex`:
 - an owned `PreToolUse` hook is added;
 - an owned localhost model provider is added;
 - `model_provider` and `model_catalog_json` point at the router-owned provider and generated overlay; and
-- a global custom agent with an explicit model may have that model normalized to its hidden route alias.
+- a valid global custom agent with an explicit model may have that model normalized to its hidden route alias.
 
 The original provider, catalog setting, scalar values, and normalized agent model are recorded for restoration. Unrelated configuration remains untouched.
 

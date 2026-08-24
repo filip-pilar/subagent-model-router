@@ -28,7 +28,11 @@
         "enabled": true,
         "originalUpstream": {
           "baseUrl": "https://api.openai.com/v1",
-          "protocol": "openai-responses"
+          "protocol": "openai-responses",
+          "credentialHeaders": [
+            "Authorization",
+            "X-Original-Auth"
+          ]
         },
         "hookTimeoutMs": 1500,
         "configPath": "/tmp/contract-home/.codex/config.toml",
@@ -62,8 +66,7 @@
             "env": "LOCAL_CODEX_KEY",
             "header": "Authorization",
             "scheme": "Bearer"
-          },
-          "requiredMultiAgentVersion": "v1"
+          }
         }
       }
     },
@@ -111,7 +114,8 @@
       "name": "explorer",
       "kind": "user",
       "path": "/tmp/contract-home/.codex/agents/explorer.toml",
-      "explicitModel": "parent-model"
+      "explicitModel": "parent-model",
+      "codexV2Eligible": true
     }
   ],
   "codexParentModel": "parent-model"

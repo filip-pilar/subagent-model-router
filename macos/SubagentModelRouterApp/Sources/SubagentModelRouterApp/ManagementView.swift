@@ -51,12 +51,27 @@ private struct DestinationsView: View {
         .task { if selection == nil, let first = items.first?.id { selection = first; load(first) } }
     }
 
-    private var valid: Bool { DestinationValidation.canSave(id: draftID, destination: draft) }
+    private var valid: Bool {
+        DestinationValidation.canSave(
+            id: draftID,
+            destination: draft,
+            existingIDs: Set(controller.payload?.config.destinations.keys ?? Dictionary<String, Destination>().keys),
+            replacing: selection
+        )
+    }
     private func protocols(_ value: Destination) -> String { [value.openaiBaseUrl == nil ? nil : "OpenAI", value.anthropicBaseUrl == nil ? nil : "Anthropic"].compactMap { $0 }.joined(separator: " · ") }
     private func optional(_ binding: Binding<String?>) -> Binding<String> { Binding(get: { binding.wrappedValue ?? "" }, set: { binding.wrappedValue = $0.isEmpty ? nil : $0 }) }
-    private func newDestination() { selection = nil; draftID = "destination-\(items.count + 1)"; draft = Destination(name: "", openaiBaseUrl: nil, anthropicBaseUrl: nil) }
+    private func newDestination() {
+        selection = nil
+        draftID = controller.payload.map { DestinationValidation.nextAvailableID(in: $0.config) } ?? "destination-1"
+        draft = Destination(name: "", openaiBaseUrl: nil, anthropicBaseUrl: nil)
+    }
     private func load(_ id: String?) { guard let id, let value = controller.payload?.config.destinations[id] else { return }; draftID = id; draft = value }
-    private func save() { guard let config = controller.payload?.config else { return }; let edited = ConfigEditing.savingDestination(config, id: draftID, destination: draft); Task { try? await controller.saveConfig(edited); selection = draftID } }
+    private func save() {
+        guard let config = controller.payload?.config,
+              let edited = ConfigEditing.savingDestination(config, id: draftID, destination: draft, replacing: selection) else { return }
+        Task { try? await controller.saveConfig(edited); selection = draftID }
+    }
     private func delete() { guard let id = selection, let config = controller.payload?.config else { return }; let edited = ConfigEditing.deletingDestination(config, id: id); Task { try? await controller.saveConfig(edited); selection = nil; newDestination() } }
     @ViewBuilder private func reachabilityIcon(_ id: String) -> some View {
         switch controller.destinationReachability[id] ?? .unknown {
@@ -91,6 +106,14 @@ private struct RoutesView: View {
         }.sorted { $0.value.name < $1.value.name }
     }
     private var advertisedModels: [String] { controller.models(destination: route.destination, harness: harness) }
+    private var codexUsesV2: Bool {
+        CodexCompatibility.supportsV2(agentType: agent, agents: controller.payload?.agents ?? [])
+    }
+    private var codexRequiresV1: Bool { harness == .codex && !codexUsesV2 }
+    private var codexRequiresParentModels: Bool {
+        guard harness == .codex, let payload = controller.payload else { return false }
+        return CodexCompatibility.requiresParentModels(agentType: agent, route: route, destinations: payload.config.destinations, agents: payload.agents)
+    }
 
     var body: some View {
         HSplitView {
@@ -109,12 +132,14 @@ private struct RoutesView: View {
                 TextField("Model", text: $route.model)
                 if !advertisedModels.isEmpty { Picker("Advertised models", selection: $route.model) { ForEach(advertisedModels, id: \.self) { Text($0).tag($0) } } }
                 Toggle("Enabled", isOn: $route.enabled)
+                if harness == .codex {
+                    LabeledContent("Compatibility") { Text(codexUsesV2 ? "Codex V2 · explicit custom agent" : "Codex V1 · dynamic agent") }
+                }
                 HStack { Button("Test Connection / Models") { Task { await controller.testModels(destination: route.destination, harness: harness) } }.disabled(route.destination.isEmpty); Spacer() }
                 DisclosureGroup("Advanced", isExpanded: $advanced) {
                     if harness == .codex {
                         TextField("Codex alias", text: optional($route.alias))
-                        Toggle("Require V1 multi-agent compatibility", isOn: Binding(get: { route.requiredMultiAgentVersion == "v1" }, set: { route.requiredMultiAgentVersion = $0 ? "v1" : nil; if $0 && parentModels.isEmpty { parentModels = configuredParentModel() } }))
-                        TextField("Parent models (comma-separated)", text: $parentModels)
+                        if codexRequiresV1 { TextField("Parent models (comma-separated)", text: $parentModels) }
                     }
                     TextField("Authorization environment variable", text: auth(\.env))
                     TextField("Authorization header", text: authOptional(\.header))
@@ -124,16 +149,21 @@ private struct RoutesView: View {
             }.formStyle(.grouped).frame(minWidth: 470)
         }
         .onChange(of: selection) { _, value in load(value) }
-        .onChange(of: harness) { _, _ in if !compatibleDestinations.contains(where: { $0.id == route.destination }) { route.destination = "" } }
+        .onChange(of: harness) { _, _ in
+            if !compatibleDestinations.contains(where: { $0.id == route.destination }) { route.destination = "" }
+            applyCodexCompatibility()
+        }
+        .onChange(of: agent) { _, _ in applyCodexCompatibility() }
         .task { if selection == nil, let first = items.first?.id { selection = first; load(first) } }
     }
 
-    private var valid: Bool { !agent.trimmingCharacters(in: .whitespaces).isEmpty && !route.destination.isEmpty && !route.model.isEmpty && (route.requiredMultiAgentVersion != "v1" || !parentModels.split(separator: ",").isEmpty) }
+    private var valid: Bool { !agent.trimmingCharacters(in: .whitespaces).isEmpty && !route.destination.isEmpty && !route.model.isEmpty && (!codexRequiresParentModels || !parentModels.split(separator: ",").isEmpty) }
     private func newRoute() { selection = nil; harness = .claude; agent = ""; route = Route(enabled: true, alias: nil, model: "", destination: "", authorization: nil, requiredMultiAgentVersion: nil); parentModels = controller.payload?.config.harnesses.codex.parentModels.joined(separator: ", ") ?? "" }
     private func load(_ id: String?) { guard let id, let item = items.first(where: { $0.id == id }) else { return }; harness = item.harness; agent = item.agent; route = item.route; parentModels = controller.payload?.config.harnesses.codex.parentModels.joined(separator: ", ") ?? "" }
     private func save() {
         guard let config = controller.payload?.config else { return }
         if harness == .codex {
+            applyCodexCompatibility()
             if route.alias?.isEmpty != false { route.alias = "router-" + agent.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression).trimmingCharacters(in: CharacterSet(charactersIn: "-")) }
         }
         let parents = parentModels.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -144,6 +174,11 @@ private struct RoutesView: View {
     private func configuredParentModel() -> String {
         let configured = controller.payload?.config.harnesses.codex.parentModels ?? []
         return configured.isEmpty ? controller.payload?.codexParentModel ?? "" : configured.joined(separator: ", ")
+    }
+    private func applyCodexCompatibility() {
+        guard harness == .codex else { return }
+        route.requiredMultiAgentVersion = codexUsesV2 ? nil : "v1"
+        if !codexUsesV2 && parentModels.isEmpty { parentModels = configuredParentModel() }
     }
     private func optional(_ binding: Binding<String?>) -> Binding<String> { Binding(get: { binding.wrappedValue ?? "" }, set: { binding.wrappedValue = $0.isEmpty ? nil : $0 }) }
     private func auth(_ path: WritableKeyPath<AuthorizationReference, String>) -> Binding<String> { Binding(get: { route.authorization?[keyPath: path] ?? "" }, set: { if route.authorization == nil { route.authorization = AuthorizationReference() }; route.authorization?[keyPath: path] = $0; if route.authorization?.env.isEmpty == true { route.authorization = nil } }) }

@@ -30,6 +30,17 @@ describe("Codex catalog overlays", () => {
     config.preserved.customCodexAgents["/custom.toml"] = { agentType: "custom", path: "/custom.toml", alias: "router-custom", originalModel: "parent", originalModelLine: 'model = "parent"', installedModelLine: 'model = "router-custom"', modelOffset: 0, originalContentHash: "x", installedContentHash: "x" };
     expect(overlayCatalog(source, config).models.find((model) => model.slug === "router-custom")).toMatchObject({ visibility: "hide" });
   });
+
+  it("does not inherit V1 metadata for a V2 custom-agent alias", () => {
+    const source = { models: [{ slug: "real-child", display_name: "Child", multi_agent_version: "v1" }] };
+    const config = defaultConfig("/tmp/project");
+    config.routes.codex.reviewer = { enabled: true, alias: "router-reviewer", model: "real-child", upstream: { baseUrl: "http://custom/v1", protocol: "openai-responses" } };
+
+    const alias = overlayCatalog(source, config).models.find((model) => model.slug === "router-reviewer");
+
+    expect(alias).toMatchObject({ slug: "router-reviewer", visibility: "hide" });
+    expect(alias?.multi_agent_version).toBeUndefined();
+  });
 });
 
 function withoutCatalogIdentity(model: Record<string, unknown>): Record<string, unknown> {

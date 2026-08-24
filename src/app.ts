@@ -105,7 +105,7 @@ export async function appState(configPath: string, home = homedir()): Promise<Re
   const [integration, detection, discovery] = await Promise.all([
     integrationStatus(configPath),
     detectHarnesses(home),
-    discover({ home, globalOnly: true, config }),
+    discover({ home, config }),
   ]);
   return { config, integration, detection, agents: discovery.agents, codexCatalog: discovery.codexCatalog, codexParentModel: await configuredCodexParentModel(home, config) };
 }
@@ -189,7 +189,7 @@ async function setupTransactionPaths(configPath: string, home: string, harness: 
       config.harnesses.codex.overlayCatalogPath ?? resolve(dirname(configPath), "codex-model-catalog.json"),
       resolve(dirname(configPath), "codex-source-catalog.json"),
     );
-    const discovered = await discover({ home, globalOnly: true, config });
+    const discovered = await discover({ home, config });
     for (const agent of discovered.agents) if (agent.harness === "codex" && agent.kind === "user" && agent.path) paths.push(agent.path);
   }
   return [...new Set(paths)];

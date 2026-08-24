@@ -28,10 +28,11 @@ The helper/app JSON boundary is represented by `contracts/app-state-v2.json`. Ty
 
 ### Codex
 
-1. A global `PreToolUse` hook assigns a hidden model alias to configured subagents.
-2. A generated model-catalog overlay advertises aliases and optional V1 metadata.
-3. Codex sends OpenAI Responses traffic to the local provider.
-4. The gateway recognizes the alias, restores the configured wire model, and forwards to the selected destination.
+1. Dynamic stock, manual, and no-model custom agents use Codex V1; a global `PreToolUse` hook assigns their hidden model alias from readable agent metadata.
+2. Codex-loadable explicit-model global custom agents use Codex V2; setup normalizes their model to the hidden alias and records the original value for restoration.
+3. A generated model-catalog overlay advertises aliases and V1 metadata only for dynamic routes and their configured parent models.
+4. Codex sends OpenAI Responses traffic to the local provider.
+5. The gateway recognizes the alias, restores the configured wire model, and forwards to the selected destination.
 
 The gateway never translates between the two protocols.
 
@@ -52,7 +53,7 @@ Writes are atomic. Install state records original values, installed values, and 
 - URLs cannot contain inline credentials or credential-like query parameters.
 - Stored authorization contains environment-variable references, never secret values.
 - Logs pass through recursive credential redaction.
-- Credential headers are preserved only when the target has the same origin as the original upstream. Cross-origin routes receive only explicitly configured environment-backed authorization.
+- Headers declared by the original Codex provider in `http_headers` or `env_http_headers` are preserved only when the target has the same origin. Cross-origin routes receive only explicitly configured environment-backed authorization.
 - The local hook and readiness endpoints are unauthenticated. The trust boundary is the current macOS user account and its global Claude/Codex configuration.
 
 ## Generated artifacts and releases

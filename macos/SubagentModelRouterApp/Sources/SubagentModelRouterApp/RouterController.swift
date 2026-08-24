@@ -4,6 +4,35 @@ import Darwin
 import Foundation
 import ServiceManagement
 
+struct LaunchAtLoginService {
+    let isEnabled: () -> Bool
+    let register: () throws -> Void
+    let unregister: () throws -> Void
+
+    static let system = LaunchAtLoginService(
+        isEnabled: { SMAppService.mainApp.status == .enabled },
+        register: { try SMAppService.mainApp.register() },
+        unregister: { try SMAppService.mainApp.unregister() }
+    )
+}
+
+struct LaunchAtLoginPreference {
+    let value: () -> Bool?
+    let set: (Bool?) -> Void
+
+    private static let key = "launchAtLoginPreference"
+    static let system = LaunchAtLoginPreference(
+        value: {
+            guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
+            return UserDefaults.standard.bool(forKey: key)
+        },
+        set: { value in
+            if let value { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+    )
+}
+
 @MainActor
 final class RouterController: ObservableObject {
     enum GatewayState: Equatable { case checking, starting, running, stopped, failed(String) }
@@ -22,12 +51,14 @@ final class RouterController: ObservableObject {
     @Published private(set) var pendingForceHarnessConflicts: [String] = []
     @Published private(set) var pendingForceReset = false
     @Published private(set) var pendingForceResetConflicts: [String] = []
-    @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @Published var launchAtLogin: Bool
 
     let paths: AppPaths
     private let installHelper: @Sendable (AppPaths) throws -> Void
     private let helperRunner: @Sendable (URL, [String], Data?, TimeInterval) throws -> ProcessResult
     private let readinessInspector: @Sendable () async -> RouterReadiness.Snapshot?
+    private let launchAtLoginService: LaunchAtLoginService
+    private let launchAtLoginPreference: LaunchAtLoginPreference
     private var helperProcess: Process?
     private var lifeline: Pipe?
     private var stopping = false
@@ -49,12 +80,17 @@ final class RouterController: ObservableObject {
         helperRunner: @escaping @Sendable (URL, [String], Data?, TimeInterval) throws -> ProcessResult = { executable, arguments, input, timeout in
             try ProcessRunner.run(executable: executable, arguments: arguments, input: input, timeout: timeout)
         },
-        readinessInspector: @escaping @Sendable () async -> RouterReadiness.Snapshot? = { await RouterReadiness.inspect() }
+        readinessInspector: @escaping @Sendable () async -> RouterReadiness.Snapshot? = { await RouterReadiness.inspect() },
+        launchAtLoginService: LaunchAtLoginService = .system,
+        launchAtLoginPreference: LaunchAtLoginPreference = .system
     ) {
         self.paths = paths
         self.installHelper = installHelper
         self.helperRunner = helperRunner
         self.readinessInspector = readinessInspector
+        self.launchAtLoginService = launchAtLoginService
+        self.launchAtLoginPreference = launchAtLoginPreference
+        self.launchAtLogin = launchAtLoginService.isEnabled()
         guard autoBootstrap else { return }
         Task { await bootstrap() }
         monitorTask = Task { [weak self] in
@@ -77,7 +113,6 @@ final class RouterController: ObservableObject {
             try await refreshPayload(showErrors: true)
             startWatching()
             if configured {
-                if SMAppService.mainApp.status != .enabled { try? SMAppService.mainApp.register() }
                 try await startGateway()
             } else { gatewayState = .stopped }
         } catch { record(error, title: "Subagent Model Router could not start", affectGateway: true) }
@@ -138,14 +173,20 @@ final class RouterController: ObservableObject {
     func setup(_ harness: Harness, force: Bool = false) { Task { await setupOperation(harness, force: force) } }
 
     func setupOperation(_ harness: Harness, force: Bool = false) async {
+        let wasConfigured = configured
         busy = true; feedback = nil
         do {
             let result = try await runHelper(["--config", paths.config.path, "setup", harness.rawValue, "--helper-path", paths.helper.path, "--json"] + (force ? ["--force"] : []), timeout: 60)
             guard result.status == 0 else { throw commandError(result) }
             try await refreshPayload()
             if !isRunning { try await startGateway() }
-            if SMAppService.mainApp.status != .enabled { try? SMAppService.mainApp.register() }
-            launchAtLogin = SMAppService.mainApp.status == .enabled
+            if !wasConfigured,
+               configured,
+               launchAtLoginPreference.value() != false,
+               !launchAtLoginService.isEnabled() {
+                try? launchAtLoginService.register()
+            }
+            launchAtLogin = launchAtLoginService.isEnabled()
             feedback = Feedback(title: "\(harness.title) routing is set up", detail: "The original configuration can be restored at any time.", failure: false)
         } catch { record(error, title: "Could not set up \(harness.title)") }
         busy = false
@@ -224,9 +265,10 @@ final class RouterController: ObservableObject {
         pendingForceReset = false
         pendingForceResetConflicts = []
         await stopGateway()
-        if SMAppService.mainApp.status == .enabled { try? await SMAppService.mainApp.unregister() }
+        if launchAtLoginService.isEnabled() { try? launchAtLoginService.unregister() }
         UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "dev.subagentmodelrouter.menu")
         UserDefaults.standard.removePersistentDomain(forName: "dev.harnessmodelrouter.menu")
+        launchAtLoginPreference.set(nil)
         launchAtLogin = false
         try? await refreshPayload()
         feedback = Feedback(title: "Router reset", detail: "Harness configuration and router data were restored.", failure: false)
@@ -234,9 +276,10 @@ final class RouterController: ObservableObject {
     }
 
     func setLaunchAtLogin(_ value: Bool) {
-        do { if value { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
+        do { if value { try launchAtLoginService.register() } else { try launchAtLoginService.unregister() } }
         catch { record(error, title: "Could not update Launch at Login") }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        launchAtLogin = launchAtLoginService.isEnabled()
+        if launchAtLogin == value { launchAtLoginPreference.set(value) }
     }
 
     func openLog() { NSWorkspace.shared.open(paths.log) }
@@ -271,7 +314,7 @@ final class RouterController: ObservableObject {
         let ready = await readinessInspector() != nil
         if ready { gatewayState = .running }
         else if helperProcess?.isRunning != true, gatewayState == .running { gatewayState = .failed("The helper is not running") }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        launchAtLogin = launchAtLoginService.isEnabled()
     }
 
     private func startWatching() {

@@ -32,21 +32,11 @@ The app never installs Claude Code or Codex. Harness configuration changes only 
 
 The app owns the gateway on fixed loopback address `127.0.0.1:9476`. Its state and helper live under `~/.local/share/subagent-model-router/`.
 
-## How routing works
+## Supported routing
 
-### Claude Code
+Claude routes use hook-provided child identity. Codex uses V1 for stock and dynamic agents and V2 for valid explicit-model global custom agents. Unsupported Codex combinations are blocked instead of silently inheriting the parent model. Discovery is limited to built-in and global user-defined agents.
 
-Setup adds owned `SubagentStart` and `SubagentStop` hooks and points `ANTHROPIC_BASE_URL` at the local gateway. Hook events map a Claude session and agent ID to an agent type. Parent traffic has no mapped child identity and passes through; a configured child uses its route.
-
-### Codex
-
-Setup adds an owned `PreToolUse` hook, a local Responses provider, and a generated model-catalog overlay. The hook assigns a hidden route alias to configured subagents; the gateway replaces that alias with the destination model before forwarding.
-
-Global custom Codex agents with an explicit model may have that model normalized to the hidden alias. The exact original model is retained for restoration. Built-in agents and global custom agents without an explicit model use the dynamic hook path. Project-specific agents are intentionally out of scope.
-
-### V1 compatibility
-
-Routes that require readable Codex V1 multi-agent metadata can enable `requiredMultiAgentVersion: "v1"`. Only the route alias and explicitly configured parent models receive the V1 marker. Unrelated catalog entries remain unchanged.
+The [user guide](docs/USING_THE_APP.md) is the source of truth for setup, compatibility, removal, and troubleshooting. [Architecture](docs/ARCHITECTURE.md) describes the internal request and lifecycle flows.
 
 ## Configuration and CLI
 
@@ -81,12 +71,15 @@ The app and CLI share `~/.local/share/subagent-model-router/config.json`. The ve
         "enabled": true,
         "alias": "router-explorer",
         "model": "example-model",
-        "destination": "example-provider"
+        "destination": "example-provider",
+        "requiredMultiAgentVersion": "v1"
       }
     }
   }
 }
 ```
+
+Because `explorer` is a built-in dynamic agent, the complete configuration must also list at least one `harnesses.codex.parentModels` entry. The app fills that value from the configured Codex parent model when available.
 
 Version 1 inline-upstream configurations migrate automatically. A deleted destination may leave a visible broken route so the route can be repaired or removed later.
 
@@ -102,7 +95,7 @@ The app does not store provider secrets. An advanced route may reference an envi
 }
 ```
 
-Non-credential end-to-end headers are preserved across destinations. Credential headers are preserved only when a request stays on the original upstream origin. A different destination receives credentials only from its environment-variable authorization reference. Transport headers such as `Host`, `Content-Length`, `Connection`, and other hop-by-hop fields are removed or reconstructed.
+End-to-end headers are preserved across destinations unless the original Codex provider declared their names in `http_headers` or `env_http_headers`; those provider-bound headers stay on the original upstream origin. A different destination receives credentials only from its environment-variable authorization reference. Transport headers such as `Host`, `Content-Length`, `Connection`, and other hop-by-hop fields are removed or reconstructed.
 
 For direct CLI use:
 
@@ -116,21 +109,11 @@ node dist/cli.js status --json
 node dist/cli.js start
 ```
 
-Run `node dist/cli.js --help` for setup, removal, route, catalog, and lifecycle commands. Discovery used by the app and CLI includes built-in agents, global user agents, and global Claude plugin agents; it does not include project-specific agents.
+Run `node dist/cli.js --help` for setup, removal, route, catalog, and lifecycle commands. Discovery is global-only and includes built-in and user-defined agents.
 
 Environment variables use the `SMR_` prefix. The previous `HMR_` names remain accepted as deprecated aliases for compatibility.
 
-## Restoration and conflicts
-
-Setup is idempotent, avoids duplicate hooks, writes atomically, and preserves unrelated JSON, TOML, agent, and catalog fields. Restoration state records only the router-owned values and hashes required to undo those changes.
-
-Normal removal refuses to overwrite a router-owned value that changed after setup. The app shows every conflict before offering an explicit force action. Force removal is intentionally destructive to the conflicting owned values, so review the listed files first.
-
-**Reset Everything** restores both harnesses, removes destinations and routes, clears app preferences, disables Launch at Login, and stops the gateway. It never uninstalls Claude Code or Codex.
-
 ## Development and verification
-
-Internal component boundaries and lifecycle behavior are documented in [Architecture](docs/ARCHITECTURE.md).
 
 Run deterministic TypeScript, packaging, and native checks:
 

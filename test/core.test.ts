@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ClaudeIdentityStore } from "../src/identity.js";
-import { decideClaudeRoute, decideCodexRoute, codexHookOutput } from "../src/routing.js";
+import { CODEX_V1_IDENTITY_REQUIRED, decideClaudeRoute, decideCodexRoute, codexHookOutput } from "../src/routing.js";
 import { defaultConfig, validateConfig } from "../src/config.js";
 import { forwardedHeaders } from "../src/headers.js";
 import { redact } from "../src/redact.js";
@@ -42,13 +42,34 @@ describe("routing", () => {
     expect(decideCodexRoute(config, "router-reviewer")).toMatchObject({ reason: "persistent-disabled", wireModel: "original-child", upstream: config.harnesses.codex.originalUpstream });
   });
 
-  it("rewrites only exact configured Codex agent_type values", () => {
+  it("rewrites V1 and explicit-custom V2 spawns and blocks unsupported identity gaps", () => {
     const config = defaultConfig("/tmp/project");
     config.harnesses.codex.enabled = true;
-    config.routes.codex.explorer = { enabled: true, alias: "router-explorer", model: "real", upstream: { baseUrl: "http://custom/v1", protocol: "openai-responses" } };
+    config.routes.codex.explorer = { enabled: true, alias: "router-explorer", model: "real", upstream: { baseUrl: "http://custom/v1", protocol: "openai-responses" }, requiredMultiAgentVersion: "v1" };
     expect(codexHookOutput(config, "collaborationspawn_agent", { agent_type: "explorer", message: "x" })).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: { agent_type: "explorer", message: "x", model: "router-explorer" } } });
+    expect(codexHookOutput(config, "collaborationspawn_agent", { task_name: "explore", message: "x" })).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: CODEX_V1_IDENTITY_REQUIRED } });
+    config.preserved.customCodexAgents["/stale-explorer.toml"] = { agentType: "explorer", path: "/stale-explorer.toml", alias: "router-explorer", originalModel: "parent", originalModelLine: 'model = "parent"', installedModelLine: 'model = "router-explorer"', modelOffset: 0, originalContentHash: "x", installedContentHash: "x" };
+    expect(codexHookOutput(config, "collaborationspawn_agent", { task_name: "explore", message: "x" })).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: CODEX_V1_IDENTITY_REQUIRED } });
     expect(codexHookOutput(config, "spawn_agent", { agent_type: "unknown" })).toBeUndefined();
     expect(codexHookOutput(config, "other", { agent_type: "explorer" })).toBeUndefined();
+
+    config.routes.codex.explorer.enabled = false;
+    config.routes.codex.reviewer = { enabled: true, alias: "router-reviewer", model: "review", upstream: { baseUrl: "http://custom/v1", protocol: "openai-responses" } };
+    config.preserved.customCodexAgents["/reviewer.toml"] = { agentType: "reviewer", path: "/reviewer.toml", alias: "router-reviewer", originalModel: "parent", originalModelLine: 'model = "parent"', installedModelLine: 'model = "router-reviewer"', modelOffset: 0, originalContentHash: "x", installedContentHash: "x" };
+    expect(codexHookOutput(config, "collaborationspawn_agent", { agent_type: "reviewer", message: "x" })).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: { agent_type: "reviewer", message: "x", model: "router-reviewer" } } });
+    expect(codexHookOutput(config, "collaborationspawn_agent", { task_name: "review", message: "x" })).toBeUndefined();
+
+    config.routes.codex.explorer.enabled = true;
+    expect(codexHookOutput(config, "collaborationspawn_agent", { agent_type: "reviewer", message: "x" })).toMatchObject({ hookSpecificOutput: { permissionDecision: "allow" } });
+    expect(codexHookOutput(config, "collaborationspawn_agent", { task_name: "review", message: "x" })).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: CODEX_V1_IDENTITY_REQUIRED } });
+  });
+
+  it("blocks an unflagged dynamic route that bypassed setup instead of inheriting the parent model", () => {
+    const config = defaultConfig("/tmp/project");
+    config.harnesses.codex.enabled = true;
+    config.routes.codex.dynamic = { enabled: true, alias: "router-dynamic", model: "real", upstream: { baseUrl: "http://custom/v1", protocol: "openai-responses" } };
+    expect(codexHookOutput(config, "collaborationspawn_agent", { task_name: "dynamic", message: "x" })).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: CODEX_V1_IDENTITY_REQUIRED } });
+    expect(codexHookOutput(config, "collaborationspawn_agent", { agent_type: "dynamic", message: "x" })).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("V2 routing requires a detected custom agent") } });
   });
 });
 

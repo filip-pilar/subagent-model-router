@@ -20,6 +20,7 @@ describe("localhost gateway acceptance", () => {
     config.harnesses.codex.enabled = true;
     config.harnesses.claude.originalUpstream.baseUrl = original.url;
     config.harnesses.codex.originalUpstream.baseUrl = original.url;
+    config.harnesses.codex.originalUpstream.credentialHeaders = ["X-Auth"];
     config.routes.claude.Explore = { enabled: true, model: "claude-routed", upstream: { baseUrl: custom.url, protocol: "anthropic-messages" } };
     config.routes.codex.explorer = { enabled: true, alias: "router-explorer", model: "codex-routed", upstream: { baseUrl: custom.url, protocol: "openai-responses" } };
     await saveConfig(path, config);
@@ -37,14 +38,16 @@ describe("localhost gateway acceptance", () => {
     await consume(fetch(`${url}/claude/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "X-Claude-Code-Session-Id": "session-a", "X-Claude-Code-Agent-Id": "agent-1" }, body: JSON.stringify({ model: "claude-main", messages: [], max_tokens: 1 }) }));
     gateway.identities.register("session-b", "agent-1", "Unknown");
     await consume(fetch(`${url}/claude/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "X-Claude-Code-Session-Id": "session-b", "X-Claude-Code-Agent-Id": "agent-1" }, body: JSON.stringify({ model: "claude-main", messages: [], max_tokens: 1 }) }));
-    await consume(fetch(`${url}/codex/v1/responses`, { method: "POST", headers: { "content-type": "application/json", "content-encoding": "gzip", authorization: "Bearer original" }, body: gzipSync(JSON.stringify({ model: "codex-parent", input: "main" })) }));
-    await consume(fetch(`${url}/codex/v1/responses`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer original" }, body: JSON.stringify({ model: "router-explorer", input: "child" }) }));
+    await consume(fetch(`${url}/codex/v1/responses`, { method: "POST", headers: { "content-type": "application/json", "content-encoding": "gzip", authorization: "Bearer original", "X-Auth": "original-secret" }, body: gzipSync(JSON.stringify({ model: "codex-parent", input: "main" })) }));
+    await consume(fetch(`${url}/codex/v1/responses`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer original", "X-Auth": "original-secret" }, body: JSON.stringify({ model: "router-explorer", input: "child" }) }));
 
     expect(original.captures.map((item) => item.body.model)).toEqual(["claude-main", "claude-main", "claude-main", "codex-parent"]);
     expect(custom.captures.map((item) => item.body.model)).toEqual(["claude-routed", "codex-routed"]);
     expect(original.captures[0]?.headers.authorization).toBe("Bearer original");
     expect(custom.captures.every((item) => item.headers.authorization === undefined)).toBe(true);
     expect(custom.captures.every((item) => item.headers.cookie === undefined && item.headers["x-provider-token"] === undefined)).toBe(true);
+    expect(custom.captures.every((item) => item.headers["x-auth"] === undefined)).toBe(true);
+    expect(original.captures[3]?.headers["x-auth"]).toBe("original-secret");
     expect(original.captures[0]?.path).toBe("/v1/messages");
     expect(original.captures[3]?.path).toBe("/v1/responses");
   });

@@ -93,12 +93,22 @@ export function validateConfig(value: unknown): string[] {
     validateRoutes(routes.claude, "claude", issues);
     validateRoutes(routes.codex, "codex", issues);
     const codexRoutes = isRecord(routes.codex) ? Object.values(routes.codex) : [];
-    const requiresV1 = codexRoutes.some((route) => isRecord(route) && route.enabled === true && route.requiredMultiAgentVersion === "v1");
+    const requiresV1 = codexRoutes.some((route) => isRecord(route)
+      && route.enabled === true
+      && route.requiredMultiAgentVersion === "v1"
+      && hasUsableCodexUpstream(route, destinations));
     const parentModels = isRecord(harnesses) && isRecord(harnesses.codex) ? harnesses.codex.parentModels : undefined;
     if (requiresV1 && (!Array.isArray(parentModels) || parentModels.length === 0)) issues.push("enabled Codex V1 routes require at least one harnesses.codex.parentModels entry");
   }
   if (!isRecord(value.preserved) || !isRecord(value.preserved.customCodexAgents)) issues.push("preserved.customCodexAgents must be an object");
   return issues;
+}
+
+function hasUsableCodexUpstream(route: Record<string, any>, destinations: unknown): boolean {
+  if (isRecord(route.upstream)) return typeof route.upstream.baseUrl === "string" && route.upstream.baseUrl.trim().length > 0;
+  if (typeof route.destination !== "string" || !isRecord(destinations)) return false;
+  const destination = destinations[route.destination];
+  return isRecord(destination) && typeof destination.openaiBaseUrl === "string" && destination.openaiBaseUrl.trim().length > 0;
 }
 
 function validateHarness(value: unknown, name: string, protocol: Protocol, issues: string[]): void {
@@ -173,6 +183,9 @@ function validateUpstream(value: unknown, path: string, expected: Protocol, issu
     }
   }
   validateAuthorization(value.authorization, `${path}.authorization`, issues);
+  if (value.credentialHeaders !== undefined && (!Array.isArray(value.credentialHeaders) || !value.credentialHeaders.every((header) => typeof header === "string" && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(header)))) {
+    issues.push(`${path}.credentialHeaders must contain valid HTTP header names`);
+  }
 }
 
 export function routeFor(config: RouterConfig, harness: "claude" | "codex", agentType: string): Route | undefined {

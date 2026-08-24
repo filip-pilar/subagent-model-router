@@ -60,7 +60,7 @@ describe("live Claude Code integration", () => {
 
     const cliPath = resolve(process.cwd(), "dist/cli.js");
     expect(await readFile(cliPath, "utf8")).toContain("subagent-model-router");
-    const installed = await installIntegration(configPath, { home, project, cliPath, nodePath: process.execPath });
+    const installed = await installIntegration(configPath, { home, cliPath, nodePath: process.execPath });
     expect(installed.conflicts).toEqual([]);
 
     const { stdout, stderr } = await runClaude([

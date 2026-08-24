@@ -32,7 +32,7 @@ export function overlayCatalog(source: ModelCatalog, config: RouterConfig): Mode
     alias.display_name = route.alias;
     alias.visibility = "hide";
     if (route.enabled && route.requiredMultiAgentVersion === "v1") alias.multi_agent_version = "v1";
-    else if (alias.multi_agent_version === "v1" && existing) delete alias.multi_agent_version;
+    else if (alias.multi_agent_version === "v1") delete alias.multi_agent_version;
     if (!existing) models.push(alias);
     bySlug.set(route.alias, alias);
   }

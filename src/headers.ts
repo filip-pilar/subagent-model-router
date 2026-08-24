@@ -45,6 +45,7 @@ export function forwardedHeaders(source: Headers, original: Upstream, target: Up
 function isCredentialHeader(name: string, original: Upstream): boolean {
   const configured = (original.authorization?.header ?? "Authorization").toLowerCase();
   return name === configured
+    || (original.credentialHeaders ?? []).some((header) => name === header.toLowerCase())
     || CREDENTIAL_HEADERS.has(name)
     || /(?:^|[-_])(?:api[-_]?key|token|secret|credential)(?:$|[-_])/.test(name);
 }

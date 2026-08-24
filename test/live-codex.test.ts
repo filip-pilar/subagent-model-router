@@ -13,8 +13,8 @@ const live = (process.env.SMR_LIVE_CODEX ?? process.env.HMR_LIVE_CODEX) === "1" 
 const servers: Server[] = [];
 afterEach(async () => { while (servers.length) await close(servers.pop()!); });
 
-describe("live Codex V1 integration", () => {
-  (live ? it : it.skip)("delivers a readable assignment while retaining the parent wire model and upstream", async () => {
+describe("live Codex compatibility integration", () => {
+  (live ? it : it.skip)("routes a stock built-in agent through V1 while retaining the parent wire model and upstream", async () => {
     const root = await temporaryRoot();
     const home = resolve(root, "home");
     const codexHome = resolve(home, ".codex");
@@ -65,7 +65,7 @@ describe("live Codex V1 integration", () => {
     await writeFile(resolve(codexHome, "config.toml"), `model = ${JSON.stringify(parentModel)}\nmodel_provider = "original"\n\n[model_providers.original]\nname = "Original mock"\nbase_url = ${JSON.stringify(`${original.url}/v1`)}\nenv_key = "CODEX_LIVE_KEY"\nwire_api = "responses"\n\n[features]\nmulti_agent = true\nmulti_agent_v2 = false\nremote_plugin = false\nplugins = false\napps = false\n`);
     const cliPath = resolve(process.cwd(), "dist/cli.js");
     expect(await readFile(cliPath, "utf8")).toContain("subagent-model-router");
-    const installed = await installIntegration(configPath, { home, project, cliPath, nodePath: process.execPath });
+    const installed = await installIntegration(configPath, { home, cliPath, nodePath: process.execPath });
     expect(installed.conflicts).toEqual([]);
 
     const { stdout, stderr } = await runCodex(["exec", "--dangerously-bypass-hook-trust", "--skip-git-repo-check", "--ephemeral", "--json", "Delegate one exploration task, wait for it, then finish."], {
@@ -85,6 +85,109 @@ describe("live Codex V1 integration", () => {
     expect(overlay.models.find((model: any) => model.slug === parentModel).multi_agent_version).toBe("v1");
     expect(overlay.models.find((model: any) => model.slug === "router-explorer")).toMatchObject({ visibility: "hide", multi_agent_version: "v1" });
   }, 30_000);
+
+  (live ? it : it.skip)("routes an explicitly configured custom agent through V2", async () => {
+    const root = await temporaryRoot();
+    const home = resolve(root, "home");
+    const codexHome = resolve(home, ".codex");
+    const agentsDirectory = resolve(codexHome, "agents");
+    const project = resolve(root, "project");
+    await mkdir(agentsDirectory, { recursive: true });
+    await mkdir(project, { recursive: true });
+    const nonce = `SMR_${randomUUID().replaceAll("-", "")}`;
+    const sourceCatalog = JSON.parse(execFileSync("codex", ["debug", "models", "--bundled"], { encoding: "utf8", env: { ...process.env, CODEX_HOME: codexHome } })) as { models: Array<Record<string, any>> };
+    const parentModel = String(sourceCatalog.models.find((model) => model.multi_agent_version !== "v1")?.slug);
+    expect(parentModel).toBeTruthy();
+
+    let rootThreadId: string | undefined;
+    let spawned = false;
+    let waited = false;
+    const original = await captureServer((capture) => {
+      rootThreadId ??= capture.body?.client_metadata?.thread_id;
+      const isRoot = capture.body?.client_metadata?.thread_id === rootThreadId;
+      const spawnTool = findNamedTool(requestTools(capture.body), "spawn_agent");
+      if (isRoot && !spawned && spawnTool) {
+        spawned = true;
+        const properties = spawnTool.parameters?.properties ?? {};
+        return sseToolFunction("custom-spawn", "custom-spawn-call", spawnTool, {
+          ...(properties.task_name ? { task_name: "reviewer" } : {}),
+          message: `Return exactly ${nonce}`,
+          ...(properties.fork_turns ? { fork_turns: "none" } : {}),
+          ...(properties.agent_type ? { agent_type: "reviewer" } : {}),
+        });
+      }
+      const input = Array.isArray(capture.body?.input) ? capture.body.input : [];
+      const waitTool = findNamedTool(requestTools(capture.body), "wait_agent");
+      if (isRoot && !waited && JSON.stringify(input).includes("custom-spawn-call") && waitTool) {
+        waited = true;
+        return sseToolFunction("custom-wait", "custom-wait-call", waitTool, { timeout_ms: 10_000 });
+      }
+      return sseMessage(isRoot ? "custom-parent-final" : "custom-unrouted-child", isRoot ? `CUSTOM_PARENT_CONFIRMED_${nonce}` : nonce);
+    });
+    const child = await captureServer(() => sseMessage("custom-child-final", nonce));
+    servers.push(original.server, child.server);
+
+    const agentPath = resolve(agentsDirectory, "reviewer.toml");
+    await writeFile(agentPath, 'name = "reviewer"\ndescription = "Review with the configured model"\ndeveloper_instructions = "Return the requested marker exactly"\nmodel = "original-reviewer-model"\nmodel_reasoning_effort = "low"\n');
+    const configPath = resolve(root, "router/config.json");
+    const config = defaultConfig(root);
+    config.harnesses.codex.enabled = true;
+    config.harnesses.codex.originalUpstream.baseUrl = original.url;
+    config.harnesses.codex.sourceCatalogPath = resolve(root, "source-catalog.json");
+    config.routes.codex.reviewer = { enabled: true, alias: "router-reviewer", model: "reviewer-wire-model", upstream: { baseUrl: child.url, protocol: "openai-responses" } };
+    await writeJson(config.harnesses.codex.sourceCatalogPath, sourceCatalog);
+    await saveConfig(configPath, config);
+    const gateway = await createGateway({ configPath });
+    await new Promise<void>((resolvePromise) => gateway.server.listen(9476, "127.0.0.1", resolvePromise));
+    servers.push(gateway.server);
+
+    await writeFile(resolve(codexHome, "config.toml"), [
+      `model = ${JSON.stringify(parentModel)}`,
+      'model_provider = "original"',
+      "",
+      "[model_providers.original]",
+      'name = "Original mock"',
+      `base_url = ${JSON.stringify(`${original.url}/v1`)}`,
+      'env_key = "CODEX_LIVE_KEY"',
+      'wire_api = "responses"',
+      "",
+      "[features]",
+      "multi_agent = true",
+      "multi_agent_v2 = true",
+      "remote_plugin = false",
+      "plugins = false",
+      "apps = false",
+      "",
+      "[agents.reviewer]",
+      'description = "Distinct reviewer role used for V2 routing."',
+      'config_file = "./agents/reviewer.toml"',
+      "",
+    ].join("\n"));
+    const cliPath = resolve(process.cwd(), "dist/cli.js");
+    expect(await readFile(cliPath, "utf8")).toContain("subagent-model-router");
+    const installed = await installIntegration(configPath, { home, cliPath, nodePath: process.execPath });
+    expect(installed.conflicts).toEqual([]);
+    expect(await readFile(agentPath, "utf8")).toContain('model = "router-reviewer"');
+
+    const { stdout, stderr } = await runCodex(["exec", "--dangerously-bypass-hook-trust", "--skip-git-repo-check", "--ephemeral", "--json", "Use the configured reviewer custom agent for one tiny task, wait for it, then finish."], {
+      cwd: project,
+      env: { ...process.env, CODEX_HOME: codexHome, CODEX_LIVE_KEY: "not-a-secret" },
+      timeoutMs: 25_000,
+    });
+    expect(stderr).not.toMatch(/error:/i);
+    expect(stdout).toContain(`CUSTOM_PARENT_CONFIRMED_${nonce}`);
+    expect(child.captures).toHaveLength(1);
+    expect(child.captures[0]?.body.model).toBe("reviewer-wire-model");
+    expect(JSON.stringify(child.captures[0]?.body.input)).toContain(nonce);
+    expect(original.captures.every((capture) => capture.body.model === parentModel)).toBe(true);
+    expect(allModels([...original.captures, ...child.captures])).not.toContain("router-reviewer");
+    const installedConfig = JSON.parse(await readFile(configPath, "utf8"));
+    expect(installedConfig.routes.codex.reviewer.requiredMultiAgentVersion).toBeUndefined();
+    const overlay = JSON.parse(await readFile(config.harnesses.codex.overlayCatalogPath!, "utf8"));
+    expect(overlay.models.find((model: any) => model.slug === parentModel).multi_agent_version).not.toBe("v1");
+    expect(overlay.models.find((model: any) => model.slug === "router-reviewer")).toMatchObject({ visibility: "hide" });
+    expect(overlay.models.find((model: any) => model.slug === "router-reviewer").multi_agent_version).not.toBe("v1");
+  }, 30_000);
 });
 
 function sseFunction(responseId: string, callId: string, name: string, argumentsValue: unknown, namespace: string): { headers: Record<string, string>; body: string } {
@@ -99,12 +202,38 @@ function sseMessage(responseId: string, text: string): { headers: Record<string,
   return sse([{ type: "response.output_item.done", item: { type: "message", role: "assistant", id: `${responseId}-message`, content: [{ type: "output_text", text }] } }, completed(responseId)]);
 }
 
+function sseToolFunction(responseId: string, callId: string, tool: any, argumentsValue: unknown): { headers: Record<string, string>; body: string } {
+  return sse([
+    { type: "response.created", response: { id: responseId } },
+    { type: "response.output_item.done", item: { type: "function_call", call_id: callId, name: tool.name, ...(tool.namespace ? { namespace: tool.namespace } : {}), arguments: JSON.stringify(argumentsValue) } },
+    completed(responseId),
+  ]);
+}
+
 function sse(events: unknown[]): { headers: Record<string, string>; body: string } {
   return { headers: { "content-type": "text/event-stream" }, body: events.map((event: any) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("") };
 }
 
 function completed(id: string): unknown {
   return { type: "response.completed", response: { id, usage: { input_tokens: 0, input_tokens_details: null, output_tokens: 0, output_tokens_details: null, total_tokens: 0 } } };
+}
+
+function findNamedTool(tools: any, name: string): any {
+  if (!Array.isArray(tools)) return undefined;
+  for (const tool of tools) {
+    if (tool?.type === "namespace" && Array.isArray(tool.tools)) {
+      const nested = tool.tools.find((candidate: any) => candidate?.name === name);
+      if (nested) return { ...nested, namespace: tool.name };
+    }
+    if (typeof tool?.name === "string" && tool.name.endsWith(name)) return tool;
+  }
+  return undefined;
+}
+
+function requestTools(body: any): any {
+  if (Array.isArray(body?.tools)) return body.tools;
+  if (!Array.isArray(body?.input)) return undefined;
+  return body.input.find((item: any) => item?.type === "additional_tools")?.tools;
 }
 
 function allModels(captures: Capture[]): string[] { return captures.map((capture) => String(capture.body.model)); }

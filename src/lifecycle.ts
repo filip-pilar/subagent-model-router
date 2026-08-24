@@ -5,9 +5,13 @@ import { atomicWriteFile, exists } from "./files.js";
 import { loadConfig, saveConfig } from "./config.js";
 import {
   adoptConfiguredCatalog,
+  assertCodexAgentSetupSafe,
+  enforceCodexCompatibility,
   ensureSourceCatalog,
   installCodexConfig,
+  isCodexV2CustomAgent,
   normalizeCustomAgent,
+  preflightCodexConfig,
   restoreCustomModel,
   selectCodexAgent,
   uninstallCodexConfig,
@@ -17,6 +21,7 @@ import {
   hookExists,
   installClaudeSettings,
   installCodexHooks,
+  preflightJsonMutation,
   replaceHookCommand,
   uninstallJsonMutation,
 } from "./lifecycle-json.js";
@@ -31,10 +36,10 @@ import {
   readInstallState,
   SERVICE_NAME,
 } from "./lifecycle-state.js";
+import type { RouterConfig } from "./types.js";
 
 export interface InstallOptions {
   home: string;
-  project?: string;
   cliPath?: string;
   nodePath?: string;
   helperPath?: string;
@@ -48,6 +53,13 @@ export interface IntegrationStatus { claude: boolean; codex: boolean }
 
 export async function installIntegration(configPath: string, options: InstallOptions): Promise<LifecycleResult> {
   const config = await loadConfig(configPath);
+  const codexDiscovery = config.harnesses.codex.enabled
+    ? await discover({ home: options.home, config })
+    : undefined;
+  if (codexDiscovery) {
+    await assertCodexAgentSetupSafe(config, codexDiscovery.agents);
+    enforceCodexCompatibility(config, codexDiscovery.agents);
+  }
   const changed: string[] = [];
   const conflicts: string[] = [];
   const statePath = installStatePath(configPath);
@@ -64,6 +76,7 @@ export async function installIntegration(configPath: string, options: InstallOpt
       `${hookPrefix} --config ${quote(configPath)} hook claude-stop`,
     ];
     state.claude = await installClaudeSettings(path, base, commands, state.claude, options.force ?? false, conflicts);
+    if (state.claude.priorBaseUrl) config.harnesses.claude.originalUpstream.baseUrl = state.claude.priorBaseUrl;
     if (conflicts.length === 0) changed.push(path);
   }
   if (config.harnesses.codex.enabled) {
@@ -87,10 +100,9 @@ export async function installIntegration(configPath: string, options: InstallOpt
       delete config.preserved.customCodexAgents[path];
       changed.push(path);
     }
-    const found = await discover({ home: options.home, globalOnly: true, config });
     for (const routeAgent of Object.keys(config.routes.codex)) {
-      const agent = selectCodexAgent(found.agents, routeAgent);
-      if (agent?.path && agent.explicitModel) {
+      const agent = selectCodexAgent(codexDiscovery!.agents, routeAgent);
+      if (agent?.path && isCodexV2CustomAgent(agent)) {
         const normalized = await normalizeCustomAgent(config, agent, options.force ?? false, conflicts);
         if (normalized) changed.push(agent.path);
       }
@@ -242,37 +254,45 @@ export async function uninstallHarnessIntegration(configPath: string, harness: "
   const state = await readInstallState(statePath);
   const changed: string[] = [];
   const conflicts: string[] = [];
+  if (!force) {
+    if (harness === "claude") {
+      if (state.claude) await preflightJsonMutation(state.claude, conflicts, "claude");
+    } else {
+      if (state.codexHooks) await preflightJsonMutation(state.codexHooks, conflicts, "codex");
+      if (state.codexConfig) await preflightCodexConfig(state.codexConfig, conflicts);
+      await preflightCustomCodexAgents(config, conflicts);
+    }
+    if (conflicts.length > 0) return { changed, conflicts };
+  }
   if (harness === "claude") {
-    if (state.claude && await uninstallJsonMutation(state.claude, force, conflicts, "claude")) {
-      changed.push(state.claude.path);
-      delete state.claude;
+    if (state.claude) {
+      const mutation = state.claude;
+      const conflictCount = conflicts.length;
+      if (await uninstallJsonMutation(mutation, force, conflicts, "claude")) changed.push(mutation.path);
+      if (conflicts.length === conflictCount) delete state.claude;
     }
-    if (conflicts.length === 0 || force) config.harnesses.claude.enabled = false;
+    if (conflicts.length === 0) config.harnesses.claude.enabled = false;
   } else {
-    if (state.codexHooks && await uninstallJsonMutation(state.codexHooks, force, conflicts, "codex")) {
-      changed.push(state.codexHooks.path);
-      delete state.codexHooks;
+    if (state.codexHooks) {
+      const mutation = state.codexHooks;
+      const conflictCount = conflicts.length;
+      if (await uninstallJsonMutation(mutation, force, conflicts, "codex")) changed.push(mutation.path);
+      if (conflicts.length === conflictCount) delete state.codexHooks;
     }
-    if (state.codexConfig && await uninstallCodexConfig(state.codexConfig, force, conflicts)) {
-      changed.push(state.codexConfig.path);
-      delete state.codexConfig;
+    if (state.codexConfig) {
+      const mutation = state.codexConfig;
+      const conflictCount = conflicts.length;
+      if (await uninstallCodexConfig(mutation, force, conflicts)) changed.push(mutation.path);
+      if (conflicts.length === conflictCount) delete state.codexConfig;
     }
-    for (const [path, preserved] of Object.entries(config.preserved.customCodexAgents)) {
-      if (!await exists(path)) { conflicts.push(`${path}: normalized custom agent is missing`); continue; }
-      const current = await readFile(path, "utf8");
-      if (hash(current) !== preserved.installedContentHash && !force) { conflicts.push(`${path}: custom agent changed after installation`); continue; }
-      const restored = restoreCustomModel(current, preserved, force);
-      await atomicWriteFile(path, restored);
-      delete config.preserved.customCodexAgents[path];
-      changed.push(path);
-    }
-    if (conflicts.length === 0 || force) {
+    await restoreCustomCodexAgents(config, force, changed);
+    if (conflicts.length === 0) {
       config.harnesses.codex.enabled = false;
       const overlay = config.harnesses.codex.overlayCatalogPath;
       if (overlay && await exists(overlay)) { await unlink(overlay); changed.push(overlay); }
     }
   }
-  if (conflicts.length === 0 || force) {
+  if (conflicts.length === 0) {
     await saveConfig(configPath, config);
     if (state.claude || state.codexHooks || state.codexConfig) await atomicWriteFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 0o600);
     else if (await exists(statePath)) await unlink(statePath);
@@ -286,29 +306,18 @@ export async function uninstallIntegration(configPath: string, force = false): P
   const state = await readInstallState(statePath);
   const changed: string[] = [];
   const conflicts: string[] = [];
+  if (!force) {
+    if (state.claude) await preflightJsonMutation(state.claude, conflicts, "claude");
+    if (state.codexHooks) await preflightJsonMutation(state.codexHooks, conflicts, "codex");
+    if (state.codexConfig) await preflightCodexConfig(state.codexConfig, conflicts);
+    await preflightCustomCodexAgents(config, conflicts);
+    if (conflicts.length > 0) return { changed, conflicts };
+  }
   if (state.claude && await uninstallJsonMutation(state.claude, force, conflicts, "claude")) changed.push(state.claude.path);
   if (state.codexHooks && await uninstallJsonMutation(state.codexHooks, force, conflicts, "codex")) changed.push(state.codexHooks.path);
   if (state.codexConfig && await uninstallCodexConfig(state.codexConfig, force, conflicts)) changed.push(state.codexConfig.path);
-  for (const [path, preserved] of Object.entries(config.preserved.customCodexAgents)) {
-    if (!await exists(path)) {
-      conflicts.push(`${path}: normalized custom agent is missing`);
-      continue;
-    }
-    const current = await readFile(path, "utf8");
-    if (hash(current) !== preserved.installedContentHash && !force) {
-      conflicts.push(`${path}: custom agent changed after installation`);
-      continue;
-    }
-    const restored = restoreCustomModel(current, preserved, force);
-    if (!force && hash(restored) !== preserved.originalContentHash) {
-      conflicts.push(`${path}: exact custom agent restoration check failed`);
-      continue;
-    }
-    await atomicWriteFile(path, restored);
-    delete config.preserved.customCodexAgents[path];
-    changed.push(path);
-  }
-  if (conflicts.length === 0 || force) {
+  await restoreCustomCodexAgents(config, force, changed);
+  if (conflicts.length === 0) {
     await saveConfig(configPath, config);
     if (await exists(statePath)) await unlink(statePath);
     const overlay = config.harnesses.codex.overlayCatalogPath;
@@ -318,6 +327,38 @@ export async function uninstallIntegration(configPath: string, force = false): P
     }
   }
   return { changed: [...new Set(changed)], conflicts };
+}
+
+async function preflightCustomCodexAgents(config: RouterConfig, conflicts: string[]): Promise<void> {
+  for (const [path, preserved] of Object.entries(config.preserved.customCodexAgents)) {
+    if (!await exists(path)) continue;
+    const current = await readFile(path, "utf8");
+    const currentHash = hash(current);
+    if (currentHash === preserved.originalContentHash) continue;
+    if (currentHash !== preserved.installedContentHash) {
+      conflicts.push(`${path}: custom agent changed after installation`);
+      continue;
+    }
+    if (hash(restoreCustomModel(current, preserved, false)) !== preserved.originalContentHash) {
+      conflicts.push(`${path}: exact custom agent restoration check failed`);
+    }
+  }
+}
+
+async function restoreCustomCodexAgents(config: RouterConfig, force: boolean, changed: string[]): Promise<void> {
+  for (const [path, preserved] of Object.entries(config.preserved.customCodexAgents)) {
+    if (await exists(path)) {
+      const current = await readFile(path, "utf8");
+      if (hash(current) !== preserved.originalContentHash) {
+        const restored = restoreCustomModel(current, preserved, force);
+        if (restored !== current) {
+          await atomicWriteFile(path, restored);
+          changed.push(path);
+        }
+      }
+    }
+    delete config.preserved.customCodexAgents[path];
+  }
 }
 
 export { writeCatalogOverlay };

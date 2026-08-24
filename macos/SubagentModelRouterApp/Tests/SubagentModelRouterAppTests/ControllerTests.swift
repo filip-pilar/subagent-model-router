@@ -18,6 +18,35 @@ private final class HelperStub: @unchecked Sendable {
     var callCount: Int { lock.withLock { calls.count } }
 }
 
+private final class LaunchAtLoginStub {
+    var enabled: Bool
+    private(set) var registerCalls = 0
+    private(set) var unregisterCalls = 0
+
+    init(enabled: Bool) { self.enabled = enabled }
+
+    var service: LaunchAtLoginService {
+        LaunchAtLoginService(
+            isEnabled: { [weak self] in self?.enabled == true },
+            register: { [weak self] in self?.registerCalls += 1; self?.enabled = true },
+            unregister: { [weak self] in self?.unregisterCalls += 1; self?.enabled = false }
+        )
+    }
+}
+
+private final class LaunchAtLoginPreferenceStub {
+    var value: Bool?
+
+    init(value: Bool? = nil) { self.value = value }
+
+    var preference: LaunchAtLoginPreference {
+        LaunchAtLoginPreference(
+            value: { [weak self] in self?.value },
+            set: { [weak self] in self?.value = $0 }
+        )
+    }
+}
+
 @MainActor
 @Test func controllerBootstrapsFromHelperState() async throws {
     let fixture = try makeFixture()
@@ -40,10 +69,13 @@ private final class HelperStub: @unchecked Sendable {
     #expect(payload.config.version == 2)
     #expect(payload.config.routes.claude["Explore"]?.authorization?.header == "X-Api-Key")
     #expect(payload.config.routes.codex["explorer"]?.alias == "router-explorer")
+    #expect(payload.config.routes.codex["explorer"]?.requiredMultiAgentVersion == nil)
+    #expect(payload.config.harnesses.codex.originalUpstream.credentialHeaders == ["Authorization", "X-Original-Auth"])
     #expect(payload.config.preserved.customCodexAgents.count == 1)
     #expect(payload.integration.claude)
     #expect(payload.detection.codex.appPath == "/Applications/Codex.app")
     #expect(payload.agents.map(\.id) == ["claude:Explore", "codex:explorer"])
+    #expect(payload.agents[1].codexV2Eligible == true)
     #expect(payload.codexParentModel == "parent-model")
 }
 
@@ -119,7 +151,7 @@ private final class HelperStub: @unchecked Sendable {
     #expect(DestinationValidation.canSave(id: "local", destination: valid))
     #expect(!DestinationValidation.canSave(id: "local", destination: partlyMalformed))
 
-    var config = ConfigEditing.savingDestination(fixture.config, id: "local", destination: valid)
+    var config = try #require(ConfigEditing.savingDestination(fixture.config, id: "local", destination: valid))
     let route = Route(enabled: true, alias: nil, model: "child", destination: "local", authorization: nil, requiredMultiAgentVersion: nil)
     config = ConfigEditing.savingRoute(config, harness: .claude, agent: "Explore", route: route, parentModels: [])
     #expect(config.routes.claude["Explore"] == route)
@@ -128,6 +160,106 @@ private final class HelperStub: @unchecked Sendable {
     #expect(config.routes.claude["Explore"]?.destination == "local")
     config = ConfigEditing.deletingRoute(config, harness: .claude, agent: "Explore")
     #expect(config.routes.claude["Explore"] == nil)
+}
+
+@Test func destinationIdentifiersDoNotOverwriteOrRetargetExistingState() throws {
+    let fixture = try makeFixture()
+    let first = Destination(name: "First", openaiBaseUrl: "http://127.0.0.1:9001/v1", anthropicBaseUrl: nil)
+    let third = Destination(name: "Third", openaiBaseUrl: "http://127.0.0.1:9003/v1", anthropicBaseUrl: nil)
+    let replacement = Destination(name: "Replacement", openaiBaseUrl: "http://127.0.0.1:9013/v1", anthropicBaseUrl: nil)
+    var config = fixture.config
+    config.destinations = ["destination-1": first, "destination-3": third]
+    config.routes.claude["Explore"] = Route(enabled: true, alias: nil, model: "child", destination: "destination-2", authorization: nil, requiredMultiAgentVersion: nil)
+
+    #expect(DestinationValidation.nextAvailableID(in: config) == "destination-4")
+    #expect(!DestinationValidation.canSave(id: "destination-3", destination: replacement, existingIDs: Set(config.destinations.keys)))
+    #expect(ConfigEditing.savingDestination(config, id: "destination-3", destination: replacement) == nil)
+
+    let edited = try #require(ConfigEditing.savingDestination(config, id: "destination-3", destination: replacement, replacing: "destination-3"))
+    #expect(edited.destinations["destination-3"] == replacement)
+    #expect(edited.destinations["destination-1"] == first)
+
+    let generatedID = DestinationValidation.nextAvailableID(in: config)
+    let added = try #require(ConfigEditing.savingDestination(config, id: generatedID, destination: replacement))
+    #expect(generatedID == "destination-4")
+    #expect(added.destinations["destination-4"] == replacement)
+    #expect(added.destinations["destination-3"] == third)
+    #expect(added.routes.claude["Explore"]?.destination == "destination-2")
+}
+
+@Test func codexCompatibilityUsesV2OnlyForExplicitGlobalCustomAgents() {
+    let agents = [
+        AgentDescription(harness: "codex", name: "explorer", kind: "built-in", path: nil, explicitModel: nil, codexV2Eligible: nil),
+        AgentDescription(harness: "codex", name: "reviewer", kind: "user", path: "/tmp/reviewer.toml", explicitModel: "gpt-custom", codexV2Eligible: true),
+        AgentDescription(harness: "codex", name: "malformed", kind: "user", path: "/tmp/malformed.toml", explicitModel: "gpt-custom", codexV2Eligible: false),
+        AgentDescription(harness: "codex", name: "dynamic", kind: "user", path: "/tmp/dynamic.toml", explicitModel: nil, codexV2Eligible: false),
+    ]
+
+    #expect(CodexCompatibility.supportsV2(agentType: "reviewer", agents: agents))
+    #expect(!CodexCompatibility.supportsV2(agentType: "explorer", agents: agents))
+    #expect(!CodexCompatibility.supportsV2(agentType: "malformed", agents: agents))
+    #expect(!CodexCompatibility.supportsV2(agentType: "dynamic", agents: agents))
+    #expect(!CodexCompatibility.supportsV2(agentType: "manual", agents: agents))
+
+    let usable = Destination(name: "OpenAI", openaiBaseUrl: "https://provider.example/v1", anthropicBaseUrl: nil)
+    let dangling = Route(enabled: true, alias: "router-explorer", model: "child", destination: "missing", authorization: nil, requiredMultiAgentVersion: "v1")
+    #expect(!CodexCompatibility.requiresParentModels(agentType: "explorer", route: dangling, destinations: [:], agents: agents))
+    #expect(CodexCompatibility.requiresParentModels(agentType: "explorer", route: dangling, destinations: ["missing": usable], agents: agents))
+    #expect(!CodexCompatibility.requiresParentModels(agentType: "reviewer", route: dangling, destinations: ["missing": usable], agents: agents))
+}
+
+@MainActor
+@Test func launchAtLoginEnablesOnceAndExplicitDisableSurvivesBootstrapAndSetup() async throws {
+    let fixture = try makeFixture()
+    var configured = try JSONDecoder().decode(AppStatePayload.self, from: Data(fixture.payload.utf8))
+    configured.integration.claude = true
+    let configuredPayload = String(decoding: try JSONEncoder().encode(configured), as: UTF8.self)
+    let stub = HelperStub { arguments in
+        if arguments.contains("setup") { return ProcessResult(status: 0, stdout: "{}", stderr: "", timedOut: false) }
+        return ProcessResult(status: 0, stdout: configuredPayload, stderr: "", timedOut: false)
+    }
+    try FileManager.default.createDirectory(at: fixture.paths.helper.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nwhile IFS= read -r line; do :; done\n".utf8).write(to: fixture.paths.helper)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fixture.paths.helper.path)
+    let login = LaunchAtLoginStub(enabled: false)
+    let preference = LaunchAtLoginPreferenceStub()
+    let controller = makeController(
+        fixture: fixture,
+        stub: stub,
+        readinessInspector: { RouterReadiness.Snapshot(ready: true, service: "subagent-model-router", version: "test") },
+        launchAtLoginService: login.service,
+        launchAtLoginPreference: preference.preference
+    )
+
+    await controller.setupOperation(.claude)
+    #expect(login.registerCalls == 1)
+    #expect(controller.launchAtLogin)
+
+    controller.setLaunchAtLogin(false)
+    #expect(login.unregisterCalls == 1)
+    #expect(!controller.launchAtLogin)
+    #expect(preference.value == false)
+
+    await controller.bootstrap()
+    await controller.setupOperation(.codex)
+    #expect(login.registerCalls == 1)
+    #expect(!controller.launchAtLogin)
+
+    controller.stopGatewayAction()
+    try await Task.sleep(for: .milliseconds(250))
+
+    let reconfigured = makeController(
+        fixture: fixture,
+        stub: stub,
+        readinessInspector: { RouterReadiness.Snapshot(ready: true, service: "subagent-model-router", version: "test") },
+        launchAtLoginService: login.service,
+        launchAtLoginPreference: preference.preference
+    )
+    await reconfigured.setupOperation(.claude)
+    #expect(login.registerCalls == 1)
+    #expect(!reconfigured.launchAtLogin)
+    reconfigured.stopGatewayAction()
+    try await Task.sleep(for: .milliseconds(250))
 }
 
 @Test func menuSymbolsExistOnTheDeploymentTarget() {
@@ -188,12 +320,20 @@ private func makeFixture() throws -> Fixture {
 }
 
 @MainActor
-private func makeController(fixture: Fixture, stub: HelperStub) -> RouterController {
+private func makeController(
+    fixture: Fixture,
+    stub: HelperStub,
+    readinessInspector: @escaping @Sendable () async -> RouterReadiness.Snapshot? = { nil },
+    launchAtLoginService: LaunchAtLoginService = .system,
+    launchAtLoginPreference: LaunchAtLoginPreference = .system
+) -> RouterController {
     RouterController(
         paths: fixture.paths,
         autoBootstrap: false,
         installHelper: { paths in try FileManager.default.createDirectory(at: paths.dataDirectory, withIntermediateDirectories: true) },
         helperRunner: { executable, arguments, input, timeout in stub.run(executable, arguments, input, timeout) },
-        readinessInspector: { nil }
+        readinessInspector: readinessInspector,
+        launchAtLoginService: launchAtLoginService,
+        launchAtLoginPreference: launchAtLoginPreference
     )
 }

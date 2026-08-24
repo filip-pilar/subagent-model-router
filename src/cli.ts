@@ -75,13 +75,13 @@ async function validate(path: string, json: boolean): Promise<void> {
 
 async function runDiscovery(path: string, json: boolean): Promise<void> {
   const config = await optionalConfig(path);
-  const result = await discover({ home: testableHome(), globalOnly: true, ...(config ? { config } : {}) });
+  const result = await discover({ home: testableHome(), ...(config ? { config } : {}) });
   if (json) return void console.log(JSON.stringify(result, null, 2));
   for (const agent of result.agents) console.log(`${agent.harness}\t${agent.kind}\t${agent.name}${agent.explicitModel ? `\tmodel=${agent.explicitModel}` : ""}${agent.path ? `\t${agent.path}` : ""}`);
 }
 
 async function install(path: string, force: boolean): Promise<void> {
-  const result = await installIntegration(path, { home: testableHome(), project: process.cwd(), cliPath: fileURLToPath(import.meta.url), force });
+  const result = await installIntegration(path, { home: testableHome(), cliPath: fileURLToPath(import.meta.url), force });
   printLifecycle(result);
 }
 

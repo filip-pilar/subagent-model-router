@@ -11,6 +11,7 @@ export interface Upstream {
   baseUrl: string;
   protocol: Protocol;
   authorization?: AuthorizationReference;
+  credentialHeaders?: string[];
 }
 
 export interface Destination {
@@ -107,9 +108,10 @@ export interface CodexPreToolInput {
 export interface DiscoveredAgent {
   harness: Harness;
   name: string;
-  kind: "built-in" | "user" | "project" | "plugin";
+  kind: "built-in" | "user";
   path?: string;
   explicitModel?: string;
+  codexV2Eligible?: boolean;
 }
 
 export interface DiscoveryResult {

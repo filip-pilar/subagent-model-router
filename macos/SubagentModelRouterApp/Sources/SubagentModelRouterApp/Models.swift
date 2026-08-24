@@ -10,6 +10,7 @@ struct Upstream: Codable, Equatable {
     var baseUrl: String
     var `protocol`: String
     var authorization: AuthorizationReference?
+    var credentialHeaders: [String]? = nil
 }
 
 struct Destination: Codable, Equatable, Hashable {
@@ -95,7 +96,26 @@ struct AgentDescription: Codable, Identifiable, Hashable {
     var kind: String
     var path: String?
     var explicitModel: String?
+    var codexV2Eligible: Bool?
     var id: String { "\(harness):\(name)" }
+}
+
+enum CodexCompatibility {
+    static func supportsV2(agentType: String, agents: [AgentDescription]) -> Bool {
+        agents.contains {
+            $0.harness == Harness.codex.rawValue
+                && $0.name == agentType
+                && $0.kind == "user"
+                && $0.codexV2Eligible == true
+                && $0.explicitModel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
+    static func requiresParentModels(agentType: String, route: Route, destinations: [String: Destination], agents: [AgentDescription]) -> Bool {
+        route.enabled
+            && !supportsV2(agentType: agentType, agents: agents)
+            && DestinationValidation.isValidURL(destinations[route.destination]?.openaiBaseUrl)
+    }
 }
 
 struct AppStatePayload: Codable {
@@ -127,6 +147,15 @@ enum DestinationReachability: Equatable {
 }
 
 enum DestinationValidation {
+    static func nextAvailableID(in config: RouterConfig) -> String {
+        let reserved = Set(config.destinations.keys)
+            .union(config.routes.claude.values.map(\.destination))
+            .union(config.routes.codex.values.map(\.destination))
+        var suffix = 1
+        while reserved.contains("destination-\(suffix)") { suffix += 1 }
+        return "destination-\(suffix)"
+    }
+
     static func isValidURL(_ value: String?) -> Bool {
         guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         guard let components = URLComponents(string: value),
@@ -135,9 +164,10 @@ enum DestinationValidation {
         return true
     }
 
-    static func canSave(id: String, destination: Destination) -> Bool {
+    static func canSave(id: String, destination: Destination, existingIDs: Set<String> = [], replacing existingID: String? = nil) -> Bool {
         guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !destination.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+              !destination.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              existingID == id || !existingIDs.contains(id) else { return false }
         let entered = [destination.openaiBaseUrl, destination.anthropicBaseUrl].compactMap { value -> String? in
             guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return value
@@ -147,7 +177,8 @@ enum DestinationValidation {
 }
 
 enum ConfigEditing {
-    static func savingDestination(_ config: RouterConfig, id: String, destination: Destination) -> RouterConfig {
+    static func savingDestination(_ config: RouterConfig, id: String, destination: Destination, replacing existingID: String? = nil) -> RouterConfig? {
+        guard config.destinations[id] == nil || existingID == id else { return nil }
         var result = config
         result.destinations[id] = destination
         return result
