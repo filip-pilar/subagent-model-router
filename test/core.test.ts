@@ -31,6 +31,44 @@ describe("routing", () => {
     expect(decideClaudeRoute(config, "claude-main", "Explore")).toMatchObject({ reason: "enabled", wireModel: "claude-fast", routed: true });
   });
 
+  it("routes enabled main traffic independently and preserves child precedence and pass-through fallbacks", () => {
+    const config = defaultConfig("/tmp/project");
+    config.harnesses.claude.enabled = true;
+    config.harnesses.codex.enabled = true;
+    config.destinations.main = { name: "Main", anthropicBaseUrl: "http://claude-main", openaiBaseUrl: "http://codex-main/v1" };
+    config.destinations.child = { name: "Child", anthropicBaseUrl: "http://claude-child", openaiBaseUrl: "http://codex-child/v1" };
+    config.mainRoutes.claude = { enabled: true, model: "claude-main-wire", destination: "main" };
+    config.mainRoutes.codex = { enabled: true, model: "codex-main-wire", destination: "main" };
+    config.routes.claude.Explore = { enabled: true, model: "claude-child-wire", destination: "child" };
+    config.routes.codex.explorer = { enabled: true, alias: "router-explorer", model: "codex-child-wire", destination: "child", requiredMultiAgentVersion: "v1" };
+
+    expect(decideClaudeRoute(config, "claude-original")).toMatchObject({ routed: true, wireModel: "claude-main-wire", upstream: { baseUrl: "http://claude-main" } });
+    expect(decideClaudeRoute(config, "claude-original", "Explore")).toMatchObject({ routed: true, wireModel: "claude-child-wire", agentType: "Explore" });
+    expect(decideClaudeRoute(config, "claude-original", "Unknown")).toMatchObject({ routed: false, reason: "unknown", wireModel: "claude-original" });
+    expect(decideCodexRoute(config, "codex-parent")).toMatchObject({ routed: true, wireModel: "codex-main-wire", upstream: { baseUrl: "http://codex-main/v1" } });
+    expect(decideCodexRoute(config, "router-explorer")).toMatchObject({ routed: true, wireModel: "codex-child-wire", agentType: "explorer" });
+
+    config.mainRoutes.claude.enabled = false;
+    config.mainRoutes.codex.destination = "missing";
+    expect(decideClaudeRoute(config, "claude-original")).toMatchObject({ routed: false, reason: "main-disabled", wireModel: "claude-original" });
+    expect(decideCodexRoute(config, "codex-parent")).toMatchObject({ routed: false, reason: "main-broken", wireModel: "codex-parent" });
+  });
+
+  it("routes an unaliased Codex subagent inheriting the parent model through the main route", () => {
+    const config = defaultConfig("/tmp/project");
+    config.harnesses.codex.enabled = true;
+    config.destinations.main = { name: "Main", openaiBaseUrl: "http://codex-main/v1" };
+    config.mainRoutes.codex = { enabled: true, model: "codex-main-wire", destination: "main" };
+
+    // The gateway receives only the inherited model, so this is intentionally
+    // indistinguishable from a parent request unless setup assigned an alias.
+    expect(decideCodexRoute(config, "parent-model")).toMatchObject({
+      routed: true,
+      wireModel: "codex-main-wire",
+      upstream: { baseUrl: "http://codex-main/v1" },
+    });
+  });
+
   it("replaces aliases and resolves persistent disabled aliases to the original model", () => {
     const config = defaultConfig("/tmp/project");
     config.harnesses.codex.enabled = true;
@@ -80,6 +118,15 @@ describe("validation and safety", () => {
     config.routes.codex.bad = { enabled: true, alias: "router-bad", model: "claude", upstream: { baseUrl: "http://example.test", protocol: "anthropic-messages" }, requiredMultiAgentVersion: "v2" };
     expect(validateConfig(config).join("\n")).toMatch(/cross-protocol|must be anthropic-messages/);
     expect(validateConfig(config).join("\n")).toMatch(/supports only v1/);
+  });
+
+  it("rejects alias and multi-agent metadata on first-class main routes", () => {
+    const config: any = defaultConfig("/tmp/project");
+    config.mainRoutes.codex = { enabled: true, model: "main", destination: "missing", alias: "router-main", requiredMultiAgentVersion: "v1" };
+    expect(validateConfig(config).join("\n")).toMatch(/mainRoutes\.codex cannot define an alias/);
+    expect(validateConfig(config).join("\n")).toMatch(/cannot require Codex multi-agent metadata/);
+    config.mainRoutes.codex = null;
+    expect(validateConfig(config).join("\n")).toMatch(/mainRoutes\.codex must be an object/);
   });
 
   it("keeps same-origin credentials and isolates credentials between destination origins", () => {

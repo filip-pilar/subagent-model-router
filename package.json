@@ -1,7 +1,7 @@
 {
   "name": "subagent-model-router",
   "version": "0.1.0",
-  "description": "Local protocol-preserving subagent model router for Claude Code and Codex",
+  "description": "Route Codex and Claude Code main agents and subagents to different models and providers.",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -55,6 +55,7 @@ struct CodexConfig: Codable, Equatable {
 
 struct HarnessConfigs: Codable, Equatable { var claude: ClaudeConfig; var codex: CodexConfig }
 struct RouteMaps: Codable, Equatable { var claude: [String: Route]; var codex: [String: Route] }
+struct MainRouteMap: Codable, Equatable { var claude: Route?; var codex: Route? }
 
 struct PreservedAgent: Codable, Equatable {
     var agentType: String
@@ -76,6 +77,7 @@ struct RouterConfig: Codable, Equatable {
     var destinations: [String: Destination]
     var harnesses: HarnessConfigs
     var routes: RouteMaps
+    var mainRoutes: MainRouteMap
     var preserved: PreservedState
 }
 
@@ -151,6 +153,7 @@ enum DestinationValidation {
         let reserved = Set(config.destinations.keys)
             .union(config.routes.claude.values.map(\.destination))
             .union(config.routes.codex.values.map(\.destination))
+            .union([config.mainRoutes.claude?.destination, config.mainRoutes.codex?.destination].compactMap { $0 })
         var suffix = 1
         while reserved.contains("destination-\(suffix)") { suffix += 1 }
         return "destination-\(suffix)"
@@ -206,6 +209,22 @@ enum ConfigEditing {
         else { result.routes.codex.removeValue(forKey: agent) }
         return result
     }
+
+    static func savingMainRoute(_ config: RouterConfig, harness: Harness, route: Route, replacingExisting: Bool = false) -> RouterConfig? {
+        let existing = harness == .claude ? config.mainRoutes.claude : config.mainRoutes.codex
+        guard existing == nil || replacingExisting else { return nil }
+        var result = config
+        if harness == .claude { result.mainRoutes.claude = route }
+        else { result.mainRoutes.codex = route }
+        return result
+    }
+
+    static func deletingMainRoute(_ config: RouterConfig, harness: Harness) -> RouterConfig {
+        var result = config
+        if harness == .claude { result.mainRoutes.claude = nil }
+        else { result.mainRoutes.codex = nil }
+        return result
+    }
 }
 
 enum Harness: String, CaseIterable, Identifiable, Codable {
@@ -219,5 +238,7 @@ struct RouteItem: Identifiable, Hashable {
     var harness: Harness
     var agent: String
     var route: Route
-    var id: String { "\(harness.rawValue):\(agent)" }
+    var isMain = false
+    var id: String { "\(harness.rawValue):\(isMain ? "main" : "subagent:\(agent)")" }
+    var title: String { isMain ? "Main agent" : agent }
 }

@@ -70,6 +70,8 @@ private final class LaunchAtLoginPreferenceStub {
     #expect(payload.config.routes.claude["Explore"]?.authorization?.header == "X-Api-Key")
     #expect(payload.config.routes.codex["explorer"]?.alias == "router-explorer")
     #expect(payload.config.routes.codex["explorer"]?.requiredMultiAgentVersion == nil)
+    #expect(payload.config.mainRoutes.claude?.model == "claude-main-routed")
+    #expect(payload.config.mainRoutes.codex?.enabled == false)
     #expect(payload.config.harnesses.codex.originalUpstream.credentialHeaders == ["Authorization", "X-Original-Auth"])
     #expect(payload.config.preserved.customCodexAgents.count == 1)
     #expect(payload.integration.claude)
@@ -155,6 +157,14 @@ private final class LaunchAtLoginPreferenceStub {
     let route = Route(enabled: true, alias: nil, model: "child", destination: "local", authorization: nil, requiredMultiAgentVersion: nil)
     config = ConfigEditing.savingRoute(config, harness: .claude, agent: "Explore", route: route, parentModels: [])
     #expect(config.routes.claude["Explore"] == route)
+    config = try #require(ConfigEditing.savingMainRoute(config, harness: .claude, route: route))
+    #expect(config.mainRoutes.claude == route)
+    let replacement = Route(enabled: false, alias: nil, model: "replacement", destination: "local", authorization: nil, requiredMultiAgentVersion: nil)
+    #expect(ConfigEditing.savingMainRoute(config, harness: .claude, route: replacement) == nil)
+    config = try #require(ConfigEditing.savingMainRoute(config, harness: .claude, route: replacement, replacingExisting: true))
+    #expect(config.mainRoutes.claude == replacement)
+    config = ConfigEditing.deletingMainRoute(config, harness: .claude)
+    #expect(config.mainRoutes.claude == nil)
     config = ConfigEditing.deletingDestination(config, id: "local")
     #expect(config.destinations["local"] == nil)
     #expect(config.routes.claude["Explore"]?.destination == "local")
@@ -303,6 +313,7 @@ private func makeFixture() throws -> Fixture {
             codex: CodexConfig(enabled: false, originalUpstream: Upstream(baseUrl: "https://api.openai.com/v1", protocol: "openai-responses", authorization: nil), hookTimeoutMs: 1_500, configPath: nil, hooksPath: nil, sourceCatalogPath: nil, overlayCatalogPath: data.appending(path: "codex-model-catalog.json").path, parentModels: [])
         ),
         routes: RouteMaps(claude: [:], codex: [:]),
+        mainRoutes: MainRouteMap(claude: nil, codex: nil),
         preserved: PreservedState(customCodexAgents: [:])
     )
     let payload = AppStatePayload(

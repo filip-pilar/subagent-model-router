@@ -19,6 +19,20 @@ describe("desktop configuration", () => {
     expect(routeUpstream(config, "claude", route)?.baseUrl).toBe("https://provider.example/claude");
   });
 
+  it("migrates a v1 main route and adds an empty first-class section to older v2 configs", () => {
+    const legacy: any = defaultConfig("/tmp/example");
+    legacy.version = 1;
+    delete legacy.destinations;
+    legacy.mainRoutes.claude = { enabled: true, model: "main", upstream: { baseUrl: "https://provider.example/claude", protocol: "anthropic-messages" } };
+    const migrated = parseConfig(legacy);
+    expect(migrated.mainRoutes.claude?.destination).toBe("claude-main");
+    expect(routeUpstream(migrated, "claude", migrated.mainRoutes.claude!)?.baseUrl).toBe("https://provider.example/claude");
+
+    const olderV2: any = defaultConfig("/tmp/example");
+    delete olderV2.mainRoutes;
+    expect(parseConfig(olderV2).mainRoutes).toEqual({});
+  });
+
   it("keeps dangling destination references valid but resolves them as broken", () => {
     const config = defaultConfig("/tmp/example");
     config.routes.codex.explorer = { enabled: true, alias: "router-explorer", model: "child", destination: "deleted" };

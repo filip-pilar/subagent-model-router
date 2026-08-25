@@ -77,6 +77,10 @@ export interface RouterConfig {
     claude: Record<string, Route>;
     codex: Record<string, Route>;
   };
+  mainRoutes: {
+    claude?: Route;
+    codex?: Route;
+  };
   preserved: {
     customCodexAgents: Record<string, PreservedCustomAgent>;
   };
@@ -86,7 +90,7 @@ export interface RouteDecision {
   harness: Harness;
   agentType?: string;
   routed: boolean;
-  reason: "main" | "unknown" | "disabled" | "broken" | "enabled" | "persistent-disabled";
+  reason: "main" | "main-disabled" | "main-broken" | "unknown" | "disabled" | "broken" | "enabled" | "persistent-disabled";
   wireModel: string;
   upstream: Upstream;
   internalAlias?: string;

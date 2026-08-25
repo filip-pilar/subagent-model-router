@@ -5,7 +5,7 @@ export const CODEX_V1_IDENTITY_REQUIRED = "Codex routing blocked this spawn beca
 
 export function decideClaudeRoute(config: RouterConfig, originalModel: string, agentType?: string): RouteDecision {
   const original = config.harnesses.claude.originalUpstream;
-  if (!agentType) return { harness: "claude", routed: false, reason: "main", wireModel: originalModel, upstream: original };
+  if (!agentType) return decideMainRoute(config, "claude", originalModel);
   const route = routeFor(config, "claude", agentType);
   if (!route) return { harness: "claude", agentType, routed: false, reason: "unknown", wireModel: originalModel, upstream: original };
   if (!route.enabled || !config.harnesses.claude.enabled) return { harness: "claude", agentType, routed: false, reason: "disabled", wireModel: originalModel, upstream: original };
@@ -17,7 +17,7 @@ export function decideClaudeRoute(config: RouterConfig, originalModel: string, a
 export function decideCodexRoute(config: RouterConfig, requestedModel: string): RouteDecision {
   const original = config.harnesses.codex.originalUpstream;
   const match = Object.entries(config.routes.codex).find(([, route]) => route.alias === requestedModel);
-  if (!match) return { harness: "codex", routed: false, reason: "main", wireModel: requestedModel, upstream: original };
+  if (!match) return decideMainRoute(config, "codex", requestedModel);
   const [agentType, route] = match;
   const preserved = Object.values(config.preserved.customCodexAgents).find((entry) => entry.alias === requestedModel && entry.agentType === agentType);
   if (route.enabled && config.harnesses.codex.enabled) {
@@ -31,6 +31,16 @@ export function decideCodexRoute(config: RouterConfig, requestedModel: string): 
     return { harness: "codex", agentType, routed: false, reason: "persistent-disabled", wireModel: preserved.originalModel, upstream: original, internalAlias: requestedModel };
   }
   return { harness: "codex", agentType, routed: false, reason: "disabled", wireModel: requestedModel, upstream: original, internalAlias: requestedModel };
+}
+
+function decideMainRoute(config: RouterConfig, harness: "claude" | "codex", originalModel: string): RouteDecision {
+  const original = config.harnesses[harness].originalUpstream;
+  const route = config.mainRoutes[harness];
+  if (!route) return { harness, routed: false, reason: "main", wireModel: originalModel, upstream: original };
+  if (!route.enabled || !config.harnesses[harness].enabled) return { harness, routed: false, reason: "main-disabled", wireModel: originalModel, upstream: original };
+  const upstream = routeUpstream(config, harness, route);
+  if (!upstream) return { harness, routed: false, reason: "main-broken", wireModel: originalModel, upstream: original };
+  return { harness, routed: true, reason: "enabled", wireModel: route.model, upstream };
 }
 
 export function codexHookOutput(config: RouterConfig, toolName: string, input: Record<string, unknown>): Record<string, unknown> | undefined {

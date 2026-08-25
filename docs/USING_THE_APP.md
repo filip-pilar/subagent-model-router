@@ -1,6 +1,6 @@
 # Using Subagent Model Router
 
-Subagent Model Router changes which model a configured Claude Code or Codex subagent uses. Parent requests and unconfigured agents continue to use their original model and endpoint.
+Subagent Model Router changes which model a configured Claude Code or Codex main agent or subagent uses. Main-agent routing is optional and configured independently for each harness. Without a usable main route, parent requests retain their original model and endpoint. Unknown Claude subagents pass through unchanged because Claude provides child identity. Codex has the narrower behavior described below.
 
 The app uses one global configuration for the Mac and discovers built-in and global user-defined agents.
 
@@ -39,19 +39,23 @@ Anthropic Messages URL: https://provider.example/claude
 
 Select **Routes** and click **Add Route**.
 
-Choose:
+Choose **Main agent** or **Named subagent**, then choose:
 
 - Claude Code or Codex;
-- a detected global agent, or enter its agent type manually;
+- for a named subagent, a detected global agent or a manually entered agent type;
 - a destination supporting that harness protocol;
 - the model slug the destination should receive; and
 - whether the route is enabled.
 
-Codex routes receive a hidden internal alias. Built-in, manually named, and custom-agent files that Codex cannot load as explicit-model roles use Codex V1 and require at least one parent model. Valid global custom roles with an explicit model use Codex V2. The app selects that compatibility mode from the detected agent; setup rejects unsupported combinations rather than silently running the child on its parent model. Advanced options also expose environment-variable authorization references.
+The route list labels main routes as **Main agent** and named routes as **Subagent**. Each harness can have at most one main route, which can be edited, disabled, or deleted independently. Choosing **Main agent** while that harness already has one opens the existing route instead of replacing it. Claude applies its main route only to identity-less requests.
+
+Codex checks router-owned hidden subagent aliases first. It applies the main route to every request whose model is not one of those aliases. This includes unconfigured Codex subagents that inherit the parent model, because their requests contain no reliable identity that distinguishes them from parent traffic. Configure an explicit subagent route when that subagent must use a different destination. Explicit aliased routes retain precedence over the Codex main route.
+
+Codex subagent routes receive a hidden internal alias. Main routes never use aliases or multi-agent metadata. Built-in, manually named, and custom-agent files that Codex cannot load as explicit-model roles use Codex V1 and require at least one parent model. Valid global custom roles with an explicit model use Codex V2. The app selects that compatibility mode from the detected agent; setup rejects unsupported combinations rather than silently running the child on its parent model. Advanced options also expose environment-variable authorization references.
 
 If V1 and V2 routes are enabled together, Codex custom-agent spawns should include their `agent_type`. An identity-less mixed-mode spawn is blocked because the router cannot safely distinguish a V2 custom spawn from a V1 spawn that lost its routing identity.
 
-Deleting a destination does not silently delete routes that reference it. Those routes remain visible as broken until repaired or removed.
+Deleting a destination does not silently delete main or subagent routes that reference it. Those routes remain visible as broken until repaired or removed, and their traffic passes through unchanged.
 
 ## 3. Set up routing
 

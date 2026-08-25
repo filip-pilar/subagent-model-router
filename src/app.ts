@@ -58,7 +58,7 @@ export async function ensureGlobalConfig(path: string, _home = homedir()): Promi
   }
   const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
   const config = parseConfig(raw);
-  if (isRecordVersion(raw) !== 2) await saveConfig(path, config);
+  if (isRecordVersion(raw) !== 2 || !hasMainRoutes(raw)) await saveConfig(path, config);
   return config;
 }
 
@@ -98,6 +98,12 @@ async function rollbackLegacyMoves(moves: LegacyMove[]): Promise<void> {
 
 function isRecordVersion(value: unknown): unknown {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>).version : undefined;
+}
+
+function hasMainRoutes(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && typeof (value as Record<string, unknown>).mainRoutes === "object"
+    && (value as Record<string, unknown>).mainRoutes !== null;
 }
 
 export async function appState(configPath: string, home = homedir()): Promise<Record<string, unknown>> {

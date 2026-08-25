@@ -29,8 +29,22 @@ describe("standalone helper", () => {
     const home = resolve(output, "../home");
     const configPath = resolve(home, ".local/share/subagent-model-router/config.json");
     mkdirSync(resolve(configPath, ".."), { recursive: true });
-    writeFileSync(configPath, `${JSON.stringify(defaultGlobalConfig(resolve(configPath, "..")), null, 2)}\n`);
+    const initial = defaultGlobalConfig(resolve(configPath, ".."));
+    initial.harnesses.codex.enabled = true;
+    writeFileSync(configPath, `${JSON.stringify(initial, null, 2)}\n`);
     expect(execFileSync(output, ["--config", configPath, "hook", "codex-pretool"], { encoding: "utf8", input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "spawn_agent", tool_input: { agent_type: "unknown" } }) })).toBe("");
+    execFileSync(output, ["--config", configPath, "main-route", "set", "codex", "--model", "main-wire", "--endpoint", "https://provider.example/v1"], { stdio: "pipe" });
+    expect(JSON.parse(readFileSync(configPath, "utf8")).mainRoutes.codex).toMatchObject({ enabled: true, model: "main-wire", destination: "codex-main" });
+    expect(JSON.parse(execFileSync(output, ["--config", configPath, "routes", "--json"], { encoding: "utf8" }))).toContainEqual(expect.objectContaining({ harness: "codex", target: "main", enabled: true, broken: false, wireModel: "main-wire" }));
+    execFileSync(output, ["--config", configPath, "main-route", "disable", "codex"], { stdio: "pipe" });
+    expect(JSON.parse(readFileSync(configPath, "utf8")).mainRoutes.codex.enabled).toBe(false);
+    execFileSync(output, ["--config", configPath, "main-route", "enable", "codex"], { stdio: "pipe" });
+    expect(JSON.parse(readFileSync(configPath, "utf8")).mainRoutes.codex.enabled).toBe(true);
+    expect(cliFailure(output, configPath, ["main-route", "set", "codex", "--endpoint", "https://provider.example/v1"])).toContain("main-route set requires --model and --endpoint");
+    expect(cliFailure(output, configPath, ["main-route", "replace", "codex"])).toContain("main-route action must be set, enable, disable, or remove");
+    execFileSync(output, ["--config", configPath, "main-route", "remove", "codex"], { stdio: "pipe" });
+    expect(JSON.parse(readFileSync(configPath, "utf8")).mainRoutes.codex).toBeUndefined();
+    expect(JSON.parse(execFileSync(output, ["--config", configPath, "routes", "--json"], { encoding: "utf8" }))).toEqual([]);
     const child = spawn(output, ["--config", configPath, "start", "--parent-lifeline"], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, SMR_HOME: home } });
     try {
       let response: Response | undefined;
@@ -45,3 +59,12 @@ describe("standalone helper", () => {
     } finally { if (!child.killed && child.exitCode === null) child.kill("SIGKILL"); }
   });
 });
+
+function cliFailure(output: string, configPath: string, args: string[]): string {
+  try {
+    execFileSync(output, ["--config", configPath, ...args], { stdio: "pipe" });
+    throw new Error("CLI command unexpectedly succeeded");
+  } catch (error) {
+    return String((error as { stderr?: Buffer }).stderr ?? error);
+  }
+}

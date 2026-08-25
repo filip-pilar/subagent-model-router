@@ -23,8 +23,9 @@ The helper/app JSON boundary is represented by `contracts/app-state-v2.json`. Ty
 
 1. Global `SubagentStart` and `SubagentStop` hooks register and remove `(session, agent ID) → agent type` mappings.
 2. Claude sends Anthropic Messages traffic to `127.0.0.1:9476/claude`.
-3. Requests without a mapped child identity pass through to the original model and upstream.
-4. Enabled mapped routes replace only the wire model and upstream destination.
+3. Requests without a mapped child identity use the enabled, usable Claude main route; otherwise they pass through unchanged.
+4. Identified children use only their matching subagent route. Unknown, disabled, or broken child routes pass through and never fall back to the main route.
+5. Enabled routes replace only the wire model and upstream destination.
 
 ### Codex
 
@@ -32,9 +33,10 @@ The helper/app JSON boundary is represented by `contracts/app-state-v2.json`. Ty
 2. Codex-loadable explicit-model global custom agents use Codex V2; setup normalizes their model to the hidden alias and records the original value for restoration.
 3. A generated model-catalog overlay advertises aliases and V1 metadata only for dynamic routes and their configured parent models.
 4. Codex sends OpenAI Responses traffic to the local provider.
-5. The gateway recognizes the alias, restores the configured wire model, and forwards to the selected destination.
+5. The gateway resolves hidden subagent aliases first, restores their configured wire model, and forwards to their selected destination.
+6. A request whose model is not a hidden subagent alias uses the enabled, usable Codex main route; otherwise it retains its requested model and original upstream. This includes unconfigured subagents that inherit the parent model: the Responses request has no reliable child identity, so the gateway cannot distinguish that traffic from the parent without an alias.
 
-The gateway never translates between the two protocols.
+The gateway never translates between the two protocols. Main routes are stored in the first-class `mainRoutes.claude` and `mainRoutes.codex` configuration fields; they do not participate in agent discovery, Codex alias catalogs, custom-agent normalization, or restoration metadata.
 
 ## Configuration lifecycle
 
@@ -52,6 +54,7 @@ Writes are atomic. Install state records original values, installed values, and 
 - The listener is fixed to loopback and a fixed port.
 - URLs cannot contain inline credentials or credential-like query parameters.
 - Stored authorization contains environment-variable references, never secret values.
+- Main and subagent routes share the same origin-aware header filtering and environment-backed destination authorization path.
 - Logs pass through recursive credential redaction.
 - Headers declared by the original Codex provider in `http_headers` or `env_http_headers` are preserved only when the target has the same origin. Cross-origin routes receive only explicitly configured environment-backed authorization.
 - The local hook and readiness endpoints are unauthenticated. The trust boundary is the current macOS user account and its global Claude/Codex configuration.

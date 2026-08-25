@@ -22,6 +22,8 @@ describe("helper/app JSON contract", () => {
       alias: "router-explorer",
     });
     expect(config.routes.codex.explorer?.requiredMultiAgentVersion).toBeUndefined();
+    expect(config.mainRoutes.claude).toMatchObject({ enabled: true, model: "claude-main-routed" });
+    expect(config.mainRoutes.codex).toMatchObject({ enabled: false, model: "codex-main-routed" });
     expect(config.harnesses.codex.originalUpstream.credentialHeaders).toEqual(["Authorization", "X-Original-Auth"]);
     expect(fixture.integration).toEqual({ claude: true, codex: true });
     expect(fixture.detection.codex.appPath).toBe("/Applications/Codex.app");

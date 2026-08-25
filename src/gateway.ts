@@ -70,6 +70,7 @@ async function handleRequest(
       mappings: identities.size,
       harnesses: { claude: config.harnesses.claude.enabled, codex: config.harnesses.codex.enabled },
       routeCount: { claude: Object.keys(config.routes.claude).length, codex: Object.keys(config.routes.codex).length },
+      mainRoutes: { claude: Boolean(config.mainRoutes.claude), codex: Boolean(config.mainRoutes.codex) },
     });
   }
   if (requestUrl.pathname === "/__router/claude/start" || requestUrl.pathname === "/__router/claude/stop") {

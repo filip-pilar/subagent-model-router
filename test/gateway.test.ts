@@ -21,6 +21,9 @@ describe("localhost gateway acceptance", () => {
     config.harnesses.claude.originalUpstream.baseUrl = original.url;
     config.harnesses.codex.originalUpstream.baseUrl = original.url;
     config.harnesses.codex.originalUpstream.credentialHeaders = ["X-Auth"];
+    config.destinations.routed = { name: "Routed", anthropicBaseUrl: custom.url, openaiBaseUrl: custom.url };
+    config.mainRoutes.claude = { enabled: true, model: "claude-main-routed", destination: "routed" };
+    config.mainRoutes.codex = { enabled: true, model: "codex-main-routed", destination: "routed" };
     config.routes.claude.Explore = { enabled: true, model: "claude-routed", upstream: { baseUrl: custom.url, protocol: "anthropic-messages" } };
     config.routes.codex.explorer = { enabled: true, alias: "router-explorer", model: "codex-routed", upstream: { baseUrl: custom.url, protocol: "openai-responses" } };
     await saveConfig(path, config);
@@ -41,15 +44,13 @@ describe("localhost gateway acceptance", () => {
     await consume(fetch(`${url}/codex/v1/responses`, { method: "POST", headers: { "content-type": "application/json", "content-encoding": "gzip", authorization: "Bearer original", "X-Auth": "original-secret" }, body: gzipSync(JSON.stringify({ model: "codex-parent", input: "main" })) }));
     await consume(fetch(`${url}/codex/v1/responses`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer original", "X-Auth": "original-secret" }, body: JSON.stringify({ model: "router-explorer", input: "child" }) }));
 
-    expect(original.captures.map((item) => item.body.model)).toEqual(["claude-main", "claude-main", "claude-main", "codex-parent"]);
-    expect(custom.captures.map((item) => item.body.model)).toEqual(["claude-routed", "codex-routed"]);
-    expect(original.captures[0]?.headers.authorization).toBe("Bearer original");
+    expect(original.captures.map((item) => item.body.model)).toEqual(["claude-main"]);
+    expect(custom.captures.map((item) => item.body.model)).toEqual(["claude-main-routed", "claude-routed", "claude-main-routed", "codex-main-routed", "codex-routed"]);
     expect(custom.captures.every((item) => item.headers.authorization === undefined)).toBe(true);
     expect(custom.captures.every((item) => item.headers.cookie === undefined && item.headers["x-provider-token"] === undefined)).toBe(true);
     expect(custom.captures.every((item) => item.headers["x-auth"] === undefined)).toBe(true);
-    expect(original.captures[3]?.headers["x-auth"]).toBe("original-secret");
     expect(original.captures[0]?.path).toBe("/v1/messages");
-    expect(original.captures[3]?.path).toBe("/v1/responses");
+    expect(custom.captures[3]?.path).toBe("/v1/responses");
   });
 
   it("streams upstream bytes and applies configured environment authorization", async () => {
@@ -85,10 +86,13 @@ describe("localhost gateway acceptance", () => {
     const first = await captureServer();
     const second = await captureServer();
     const original = await captureServer();
-    servers.push(first.server, second.server, original.server);
+    const main = await captureServer();
+    servers.push(first.server, second.server, original.server, main.server);
     const { config, path } = await testConfig(root);
     config.harnesses.claude.enabled = true;
     config.harnesses.claude.originalUpstream.baseUrl = original.url;
+    config.destinations.main = { name: "Main", anthropicBaseUrl: main.url };
+    config.mainRoutes.claude = { enabled: true, model: "main-model", destination: "main" };
     config.routes.claude.Explore = { enabled: true, model: "first-model", upstream: { baseUrl: first.url, protocol: "anthropic-messages" } };
     config.routes.claude.Plan = { enabled: true, model: "second-model", upstream: { baseUrl: second.url, protocol: "anthropic-messages" } };
     await saveConfig(path, config);
@@ -100,11 +104,19 @@ describe("localhost gateway acceptance", () => {
     const address = gateway.server.address();
     if (!address || typeof address === "string") throw new Error("gateway address missing");
     const url = `http://127.0.0.1:${address.port}/v1/messages`;
-    await Promise.all(Array.from({ length: 40 }, (_, index) => consume(fetch(url, { method: "POST", headers: { "content-type": "application/json", "X-Claude-Code-Session-Id": index % 2 ? "one" : "two", "X-Claude-Code-Agent-Id": "shared" }, body: JSON.stringify({ model: "main", messages: [], max_tokens: 1 }) }))));
+    await Promise.all(Array.from({ length: 60 }, (_, index) => {
+      const headers = index % 3 === 0
+        ? { "content-type": "application/json" }
+        : { "content-type": "application/json", "X-Claude-Code-Session-Id": index % 3 === 1 ? "one" : "two", "X-Claude-Code-Agent-Id": "shared" };
+      return consume(fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "original-main", messages: [], max_tokens: 1 }) }));
+    }));
     expect(first.captures).toHaveLength(20);
     expect(second.captures).toHaveLength(20);
+    expect(main.captures).toHaveLength(20);
+    expect(original.captures).toHaveLength(0);
     expect(first.captures.every((item) => item.body.model === "first-model")).toBe(true);
     expect(second.captures.every((item) => item.body.model === "second-model")).toBe(true);
+    expect(main.captures.every((item) => item.body.model === "main-model")).toBe(true);
   });
 
   it("continues using the last valid configuration while an external edit is invalid", async () => {

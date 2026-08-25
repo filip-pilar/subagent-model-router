@@ -26,6 +26,7 @@ export function defaultConfig(root: string): RouterConfig {
       },
     },
     routes: { claude: {}, codex: {} },
+    mainRoutes: {},
     preserved: { customCodexAgents: {} },
   };
 }
@@ -100,6 +101,17 @@ export function validateConfig(value: unknown): string[] {
     const parentModels = isRecord(harnesses) && isRecord(harnesses.codex) ? harnesses.codex.parentModels : undefined;
     if (requiresV1 && (!Array.isArray(parentModels) || parentModels.length === 0)) issues.push("enabled Codex V1 routes require at least one harnesses.codex.parentModels entry");
   }
+  const mainRoutes = value.mainRoutes;
+  if (!isRecord(mainRoutes)) issues.push("mainRoutes must be an object");
+  else {
+    for (const harness of ["claude", "codex"] as const) {
+      const route = mainRoutes[harness];
+      if (route !== undefined) {
+        if (!isRecord(route)) issues.push(`mainRoutes.${harness} must be an object`);
+        else validateRoute(route, `mainRoutes.${harness}`, harness, issues, false);
+      }
+    }
+  }
   if (!isRecord(value.preserved) || !isRecord(value.preserved.customCodexAgents)) issues.push("preserved.customCodexAgents must be an object");
   return issues;
 }
@@ -126,14 +138,7 @@ function validateRoutes(value: unknown, harness: string, issues: string[]): void
       issues.push(`routes.${harness}.${agent} must be an object`);
       continue;
     }
-    if (typeof candidate.enabled !== "boolean") issues.push(`routes.${harness}.${agent}.enabled must be boolean`);
-    if (typeof candidate.model !== "string" || !candidate.model.trim()) issues.push(`routes.${harness}.${agent}.model must be a non-empty string`);
-    if (typeof candidate.destination !== "string" || !candidate.destination.trim()) {
-      const expected = harness === "claude" ? "anthropic-messages" : "openai-responses";
-      if (candidate.upstream !== undefined) validateUpstream(candidate.upstream, `routes.${harness}.${agent}.upstream`, expected, issues);
-      else issues.push(`routes.${harness}.${agent}.destination must be a non-empty destination id`);
-    }
-    validateAuthorization(candidate.authorization, `routes.${harness}.${agent}.authorization`, issues);
+    validateRoute(candidate, `routes.${harness}.${agent}`, harness, issues, true);
     if (harness === "codex") {
       if (typeof candidate.alias !== "string" || !/^router-[a-z0-9][a-z0-9-]*$/.test(candidate.alias)) issues.push(`routes.codex.${agent}.alias must match router-[a-z0-9-]+`);
       else if (aliases.has(candidate.alias)) issues.push(`routes.codex alias ${candidate.alias} is duplicated`);
@@ -141,6 +146,19 @@ function validateRoutes(value: unknown, harness: string, issues: string[]): void
       if (candidate.requiredMultiAgentVersion !== undefined && candidate.requiredMultiAgentVersion !== "v1") issues.push(`routes.codex.${agent}.requiredMultiAgentVersion supports only v1`);
     } else if (candidate.requiredMultiAgentVersion !== undefined) issues.push(`routes.claude.${agent} cannot require Codex multi-agent metadata`);
   }
+}
+
+function validateRoute(candidate: Record<string, any>, path: string, harness: string, issues: string[], child: boolean): void {
+  if (typeof candidate.enabled !== "boolean") issues.push(`${path}.enabled must be boolean`);
+  if (typeof candidate.model !== "string" || !candidate.model.trim()) issues.push(`${path}.model must be a non-empty string`);
+  if (typeof candidate.destination !== "string" || !candidate.destination.trim()) {
+    const expected = harness === "claude" ? "anthropic-messages" : "openai-responses";
+    if (candidate.upstream !== undefined) validateUpstream(candidate.upstream, `${path}.upstream`, expected, issues);
+    else issues.push(`${path}.destination must be a non-empty destination id`);
+  }
+  validateAuthorization(candidate.authorization, `${path}.authorization`, issues);
+  if (!child && candidate.alias !== undefined) issues.push(`${path} cannot define an alias`);
+  if (!child && candidate.requiredMultiAgentVersion !== undefined) issues.push(`${path} cannot require Codex multi-agent metadata`);
 }
 
 function validateDestination(value: unknown, path: string, issues: string[]): void {
@@ -207,8 +225,10 @@ export function routeUpstream(config: RouterConfig, harness: Harness, route: Rou
 }
 
 export function migrateConfig(value: unknown): unknown {
-  if (!isRecord(value) || value.version !== 1) return value;
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2)) return value;
   const migrated = structuredClone(value) as Record<string, any>;
+  migrated.mainRoutes ??= {};
+  if (value.version === 2) return migrated;
   migrated.version = 2;
   if (isRecord(migrated.gateway)) {
     migrated.gateway.host = "127.0.0.1";
@@ -229,8 +249,21 @@ export function migrateConfig(value: unknown): unknown {
       if (route.upstream.authorization) route.authorization = route.upstream.authorization;
       delete route.upstream;
     }
+    const mainRoute = isRecord(migrated.mainRoutes?.[harness]) ? migrated.mainRoutes[harness] as Record<string, any> : undefined;
+    if (mainRoute && isRecord(mainRoute.upstream)) migrateInlineRoute(migrated.destinations, mainRoute, `${harness}-main`, `${harness === "claude" ? "Claude" : "Codex"} · Main agent`, harness);
   }
   return migrated;
+}
+
+function migrateInlineRoute(destinations: Record<string, any>, route: Record<string, any>, seed: string, name: string, harness: Harness): void {
+  const destinationId = uniqueDestinationId(destinations, seed);
+  destinations[destinationId] = {
+    name,
+    ...(harness === "claude" ? { anthropicBaseUrl: route.upstream.baseUrl } : { openaiBaseUrl: route.upstream.baseUrl }),
+  };
+  route.destination = destinationId;
+  if (route.upstream.authorization) route.authorization = route.upstream.authorization;
+  delete route.upstream;
 }
 
 function uniqueDestinationId(destinations: Record<string, unknown>, seed: string): string {

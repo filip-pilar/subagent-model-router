@@ -32,6 +32,7 @@ async function main(rawArgs: string[]): Promise<void> {
     case "routes": return void await routes(configPath, rest.includes("--json"));
     case "catalog": return void await catalog(configPath, rest.includes("--json"));
     case "route": return void await routeCommand(configPath, rest);
+    case "main-route": return void await mainRouteCommand(configPath, rest);
     case "disable": return void await disableHarness(configPath, rest[0]);
     case "enable": return void await enableHarness(configPath, rest[0]);
     case "hook": return void await hookCommand(configPath, rest[0]);
@@ -118,19 +119,26 @@ async function status(path: string, json: boolean): Promise<void> {
     const response = await fetch(`http://${config.gateway.host}:${config.gateway.port}/__router/status`, { signal: AbortSignal.timeout(700) });
     gateway = { reachable: response.ok, ...(response.ok ? await response.json() as object : { status: response.status }) };
   } catch { /* an unavailable gateway is a normal status */ }
-  const value = { gateway, harnesses: { claude: config.harnesses.claude.enabled, codex: config.harnesses.codex.enabled }, routeCount: { claude: Object.keys(config.routes.claude).length, codex: Object.keys(config.routes.codex).length } };
+  const value = { gateway, harnesses: { claude: config.harnesses.claude.enabled, codex: config.harnesses.codex.enabled }, routeCount: { claude: Object.keys(config.routes.claude).length, codex: Object.keys(config.routes.codex).length }, mainRoutes: { claude: Boolean(config.mainRoutes.claude), codex: Boolean(config.mainRoutes.codex) } };
   if (json) console.log(JSON.stringify(value, null, 2));
   else console.log(`gateway=${(gateway as any).reachable ? "running" : "stopped"} claude=${config.harnesses.claude.enabled ? "enabled" : "disabled"} codex=${config.harnesses.codex.enabled ? "enabled" : "disabled"}`);
 }
 
 async function routes(path: string, json: boolean): Promise<void> {
   const config = await loadConfig(path);
-  const effective = (Object.entries(config.routes) as Array<[Harness, Record<string, Route>]>).flatMap(([harness, entries]) => Object.entries(entries).map(([agent, route]) => {
+  const children = (Object.entries(config.routes) as Array<[Harness, Record<string, Route>]>).flatMap(([harness, entries]) => Object.entries(entries).map(([agent, route]) => {
     const upstream = routeUpstream(config, harness, route);
-    return { harness, agent, enabled: route.enabled && config.harnesses[harness].enabled && Boolean(upstream), broken: !upstream, destination: route.destination, alias: route.alias, wireModel: route.model, endpoint: upstream?.baseUrl, protocol: upstream?.protocol, requiredMultiAgentVersion: route.requiredMultiAgentVersion };
+    return { harness, target: "subagent" as const, agent, enabled: route.enabled && config.harnesses[harness].enabled && Boolean(upstream), broken: !upstream, destination: route.destination, alias: route.alias, wireModel: route.model, endpoint: upstream?.baseUrl, protocol: upstream?.protocol, requiredMultiAgentVersion: route.requiredMultiAgentVersion };
   }));
+  const mains = (["claude", "codex"] as Harness[]).flatMap((harness) => {
+    const route = config.mainRoutes[harness];
+    if (!route) return [];
+    const upstream = routeUpstream(config, harness, route);
+    return [{ harness, target: "main" as const, enabled: route.enabled && config.harnesses[harness].enabled && Boolean(upstream), broken: !upstream, destination: route.destination, wireModel: route.model, endpoint: upstream?.baseUrl, protocol: upstream?.protocol }];
+  });
+  const effective = [...mains, ...children];
   if (json) console.log(JSON.stringify(effective, null, 2));
-  else for (const route of effective) console.log(`${route.harness}\t${route.agent}\t${route.enabled ? "enabled" : "disabled"}\t${route.alias ?? "-"}\t${route.wireModel}\t${route.endpoint}`);
+  else for (const route of effective) console.log(`${route.harness}\t${route.target === "main" ? "Main agent" : route.agent}\t${route.enabled ? "enabled" : "disabled"}\t${"alias" in route ? route.alias ?? "-" : "-"}\t${route.wireModel}\t${route.endpoint}`);
 }
 
 async function catalog(path: string, json: boolean): Promise<void> {
@@ -178,6 +186,35 @@ async function routeCommand(path: string, args: string[]): Promise<void> {
   await saveConfig(path, config);
   if (config.harnesses.codex.sourceCatalogPath && config.harnesses.codex.overlayCatalogPath && await exists(config.harnesses.codex.sourceCatalogPath)) await writeCatalogOverlay(config);
   console.log(`${action} ${harnessValue} route ${agent}`);
+}
+
+async function mainRouteCommand(path: string, args: string[]): Promise<void> {
+  const [action, harnessValue] = args;
+  if (action !== "set" && action !== "enable" && action !== "disable" && action !== "remove") throw new Error("main-route action must be set, enable, disable, or remove");
+  if (harnessValue !== "claude" && harnessValue !== "codex") throw new Error("main-route harness must be claude or codex");
+  const config = await loadConfig(path);
+  if (action === "remove") delete config.mainRoutes[harnessValue];
+  else if (action === "enable" || action === "disable") {
+    const route = config.mainRoutes[harnessValue];
+    if (!route) throw new Error(`No ${harnessValue} main-agent route exists`);
+    route.enabled = action === "enable";
+  } else {
+    const model = option(args, "--model");
+    const endpoint = option(args, "--endpoint");
+    if (!model || !endpoint) throw new Error("main-route set requires --model and --endpoint");
+    const authorizationEnv = option(args, "--auth-env");
+    const destination = option(args, "--destination") ?? `${harnessValue}-main`;
+    config.destinations[destination] ??= {
+      name: `${harnessValue === "claude" ? "Claude" : "Codex"} · Main agent`,
+      ...(harnessValue === "claude" ? { anthropicBaseUrl: endpoint } : { openaiBaseUrl: endpoint }),
+    };
+    config.mainRoutes[harnessValue] = {
+      enabled: !args.includes("--disabled"), model, destination,
+      ...(authorizationEnv ? { authorization: { env: authorizationEnv, ...(option(args, "--auth-header") ? { header: option(args, "--auth-header")! } : {}), ...(option(args, "--auth-scheme") ? { scheme: option(args, "--auth-scheme")! } : {}) } } : {}),
+    };
+  }
+  await saveConfig(path, config);
+  console.log(`${action} ${harnessValue} main-agent route`);
 }
 
 async function disableHarness(path: string, value: string | undefined): Promise<void> {
@@ -228,7 +265,7 @@ function testableHome(): string {
 async function readStdin(): Promise<string> { const chunks: Buffer[] = []; for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk)); return Buffer.concat(chunks).toString("utf8"); }
 
 async function printHelp(): Promise<void> {
-  console.log(`subagent-model-router ${ROUTER_VERSION}\n\nCommands:\n  app-state --json\n  setup <claude|codex> --helper-path <path>\n  remove <claude|codex> [--force]\n  config get|replace\n  reset [--force]\n  models <destination> <claude|codex>\n  init [--force]\n  discover [--json]\n  install [--force]\n  validate [--json]\n  route set <claude|codex> <agent> --model <slug> --endpoint <url> [--alias <alias>]\n  route enable|disable <claude|codex> <agent>\n  routes [--json]\n  catalog [--json]\n  status [--json]\n  start [--parent-lifeline]\n  enable|disable <claude|codex|all>\n  restore|uninstall [--force]\n\nGlobal:\n  --config <path>`);
+  console.log(`subagent-model-router ${ROUTER_VERSION}\n\nCommands:\n  app-state --json\n  setup <claude|codex> --helper-path <path>\n  remove <claude|codex> [--force]\n  config get|replace\n  reset [--force]\n  models <destination> <claude|codex>\n  init [--force]\n  discover [--json]\n  install [--force]\n  validate [--json]\n  main-route set <claude|codex> --model <slug> --endpoint <url>\n  main-route enable|disable|remove <claude|codex>\n  route set <claude|codex> <agent> --model <slug> --endpoint <url> [--alias <alias>]\n  route enable|disable <claude|codex> <agent>\n  routes [--json]\n  catalog [--json]\n  status [--json]\n  start [--parent-lifeline]\n  enable|disable <claude|codex|all>\n  restore|uninstall [--force]\n\nGlobal:\n  --config <path>`);
 }
 
 async function printAppState(path: string): Promise<void> { console.log(JSON.stringify(await appState(path, testableHome()), null, 2)); }

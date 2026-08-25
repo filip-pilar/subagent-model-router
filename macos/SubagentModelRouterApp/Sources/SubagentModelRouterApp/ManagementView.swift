@@ -90,6 +90,7 @@ private struct RoutesView: View {
     @ObservedObject var controller: RouterController
     @State private var selection: String?
     @State private var harness: Harness = .claude
+    @State private var isMain = false
     @State private var agent = ""
     @State private var route = Route(enabled: true, alias: nil, model: "", destination: "", authorization: nil, requiredMultiAgentVersion: nil)
     @State private var parentModels = ""
@@ -97,7 +98,11 @@ private struct RoutesView: View {
 
     private var items: [RouteItem] {
         guard let config = controller.payload?.config else { return [] }
-        return (config.routes.claude.map { RouteItem(harness: .claude, agent: $0.key, route: $0.value) } + config.routes.codex.map { RouteItem(harness: .codex, agent: $0.key, route: $0.value) }).sorted { $0.agent < $1.agent }
+        var result = config.routes.claude.map { RouteItem(harness: .claude, agent: $0.key, route: $0.value) }
+            + config.routes.codex.map { RouteItem(harness: .codex, agent: $0.key, route: $0.value) }
+        if let route = config.mainRoutes.claude { result.append(RouteItem(harness: .claude, agent: "", route: route, isMain: true)) }
+        if let route = config.mainRoutes.codex { result.append(RouteItem(harness: .codex, agent: "", route: route, isMain: true)) }
+        return result.sorted { ($0.isMain ? 0 : 1, $0.title, $0.harness.rawValue) < ($1.isMain ? 0 : 1, $1.title, $1.harness.rawValue) }
     }
     private var compatibleDestinations: [DestinationItem] {
         (controller.payload?.config.destinations ?? [:]).compactMap { id, value in
@@ -109,9 +114,9 @@ private struct RoutesView: View {
     private var codexUsesV2: Bool {
         CodexCompatibility.supportsV2(agentType: agent, agents: controller.payload?.agents ?? [])
     }
-    private var codexRequiresV1: Bool { harness == .codex && !codexUsesV2 }
+    private var codexRequiresV1: Bool { harness == .codex && !isMain && !codexUsesV2 }
     private var codexRequiresParentModels: Bool {
-        guard harness == .codex, let payload = controller.payload else { return false }
+        guard harness == .codex, !isMain, let payload = controller.payload else { return false }
         return CodexCompatibility.requiresParentModels(agentType: agent, route: route, destinations: payload.config.destinations, agents: payload.agents)
     }
 
@@ -119,25 +124,30 @@ private struct RoutesView: View {
         HSplitView {
             VStack(spacing: 8) {
                 if items.isEmpty { ContentUnavailableView("No Routes", systemImage: "arrow.triangle.swap", description: Text("Add a destination, then route a global agent.")) }
-                else { List(items, selection: $selection) { item in HStack { VStack(alignment: .leading) { Text(item.agent); Text(item.harness.title).font(.caption).foregroundStyle(.secondary) }; Spacer(); if controller.payload?.config.destinations[item.route.destination] == nil { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) } else if item.route.enabled { Circle().fill(.green).frame(width: 7, height: 7) } }.tag(item.id) } }
+                else { List(items, selection: $selection) { item in HStack { VStack(alignment: .leading) { Text(item.title).fontWeight(item.isMain ? .semibold : .regular); Text(item.isMain ? "\(item.harness.title) · Main agent" : "\(item.harness.title) · Subagent").font(.caption).foregroundStyle(.secondary) }; Spacer(); if controller.payload?.config.destinations[item.route.destination] == nil { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) } else if item.route.enabled { Circle().fill(.green).frame(width: 7, height: 7) } }.tag(item.id) } }
                 Button("Add Route", systemImage: "plus") { newRoute() }.padding(.bottom, 4)
             }.frame(minWidth: 230)
             Form {
                 Picker("Harness", selection: $harness) { ForEach(Harness.allCases) { Text($0.title).tag($0) } }.disabled(selection != nil)
-                TextField("Agent type", text: $agent).disabled(selection != nil)
-                if let agents = controller.payload?.agents.filter({ $0.harness == harness.rawValue }), !agents.isEmpty {
-                    Picker("Detected agents", selection: $agent) { Text("Manual entry").tag(""); ForEach(agents) { Text("\($0.name) · \($0.kind)").tag($0.name) } }
+                Picker("Route", selection: $isMain) { Text("Main agent").tag(true); Text("Named subagent").tag(false) }.disabled(selection != nil)
+                if isMain {
+                    LabeledContent("Traffic") { Text(harness == .claude ? "Identity-less parent requests only" : "All non-alias requests, including inherited subagents").foregroundStyle(.secondary) }
+                } else {
+                    TextField("Agent type", text: $agent).disabled(selection != nil)
+                    if let agents = controller.payload?.agents.filter({ $0.harness == harness.rawValue }), !agents.isEmpty {
+                        Picker("Detected agents", selection: $agent) { Text("Manual entry").tag(""); ForEach(agents) { Text("\($0.name) · \($0.kind)").tag($0.name) } }
+                    }
                 }
                 Picker("Destination", selection: $route.destination) { Text("Select…").tag(""); ForEach(compatibleDestinations) { Text($0.value.name).tag($0.id) } }
                 TextField("Model", text: $route.model)
                 if !advertisedModels.isEmpty { Picker("Advertised models", selection: $route.model) { ForEach(advertisedModels, id: \.self) { Text($0).tag($0) } } }
                 Toggle("Enabled", isOn: $route.enabled)
-                if harness == .codex {
+                if harness == .codex && !isMain {
                     LabeledContent("Compatibility") { Text(codexUsesV2 ? "Codex V2 · explicit custom agent" : "Codex V1 · dynamic agent") }
                 }
                 HStack { Button("Test Connection / Models") { Task { await controller.testModels(destination: route.destination, harness: harness) } }.disabled(route.destination.isEmpty); Spacer() }
                 DisclosureGroup("Advanced", isExpanded: $advanced) {
-                    if harness == .codex {
+                    if harness == .codex && !isMain {
                         TextField("Codex alias", text: optional($route.alias))
                         if codexRequiresV1 { TextField("Parent models (comma-separated)", text: $parentModels) }
                     }
@@ -151,34 +161,51 @@ private struct RoutesView: View {
         .onChange(of: selection) { _, value in load(value) }
         .onChange(of: harness) { _, _ in
             if !compatibleDestinations.contains(where: { $0.id == route.destination }) { route.destination = "" }
-            applyCodexCompatibility()
+            if !selectExistingMainRoute() { applyCodexCompatibility() }
         }
         .onChange(of: agent) { _, _ in applyCodexCompatibility() }
+        .onChange(of: isMain) { _, value in
+            if !value || !selectExistingMainRoute() { applyCodexCompatibility() }
+        }
         .task { if selection == nil, let first = items.first?.id { selection = first; load(first) } }
     }
 
-    private var valid: Bool { !agent.trimmingCharacters(in: .whitespaces).isEmpty && !route.destination.isEmpty && !route.model.isEmpty && (!codexRequiresParentModels || !parentModels.split(separator: ",").isEmpty) }
-    private func newRoute() { selection = nil; harness = .claude; agent = ""; route = Route(enabled: true, alias: nil, model: "", destination: "", authorization: nil, requiredMultiAgentVersion: nil); parentModels = controller.payload?.config.harnesses.codex.parentModels.joined(separator: ", ") ?? "" }
-    private func load(_ id: String?) { guard let id, let item = items.first(where: { $0.id == id }) else { return }; harness = item.harness; agent = item.agent; route = item.route; parentModels = controller.payload?.config.harnesses.codex.parentModels.joined(separator: ", ") ?? "" }
+    private var valid: Bool { (isMain || !agent.trimmingCharacters(in: .whitespaces).isEmpty) && !route.destination.isEmpty && !route.model.isEmpty && (!codexRequiresParentModels || !parentModels.split(separator: ",").isEmpty) }
+    private func newRoute() { selection = nil; harness = .claude; isMain = false; agent = ""; route = Route(enabled: true, alias: nil, model: "", destination: "", authorization: nil, requiredMultiAgentVersion: nil); parentModels = controller.payload?.config.harnesses.codex.parentModels.joined(separator: ", ") ?? "" }
+    private func load(_ id: String?) { guard let id, let item = items.first(where: { $0.id == id }) else { return }; harness = item.harness; isMain = item.isMain; agent = item.agent; route = item.route; parentModels = controller.payload?.config.harnesses.codex.parentModels.joined(separator: ", ") ?? "" }
     private func save() {
         guard let config = controller.payload?.config else { return }
-        if harness == .codex {
+        if harness == .codex && !isMain {
             applyCodexCompatibility()
             if route.alias?.isEmpty != false { route.alias = "router-" + agent.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression).trimmingCharacters(in: CharacterSet(charactersIn: "-")) }
         }
-        let parents = parentModels.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let edited = ConfigEditing.savingRoute(config, harness: harness, agent: agent, route: route, parentModels: parents)
-        Task { do { try await controller.saveConfig(edited); selection = "\(harness.rawValue):\(agent)" } catch {} }
+        let edited: RouterConfig
+        if isMain {
+            route.alias = nil
+            route.requiredMultiAgentVersion = nil
+            guard let mainEdit = ConfigEditing.savingMainRoute(config, harness: harness, route: route, replacingExisting: selection != nil) else { return }
+            edited = mainEdit
+        } else {
+            let parents = parentModels.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            edited = ConfigEditing.savingRoute(config, harness: harness, agent: agent, route: route, parentModels: parents)
+        }
+        Task { do { try await controller.saveConfig(edited); selection = isMain ? "\(harness.rawValue):main" : "\(harness.rawValue):subagent:\(agent)" } catch {} }
     }
-    private func delete() { guard let config = controller.payload?.config else { return }; let edited = ConfigEditing.deletingRoute(config, harness: harness, agent: agent); Task { try? await controller.saveConfig(edited); selection = nil; newRoute() } }
+    private func delete() { guard let config = controller.payload?.config else { return }; let edited = isMain ? ConfigEditing.deletingMainRoute(config, harness: harness) : ConfigEditing.deletingRoute(config, harness: harness, agent: agent); Task { try? await controller.saveConfig(edited); selection = nil; newRoute() } }
     private func configuredParentModel() -> String {
         let configured = controller.payload?.config.harnesses.codex.parentModels ?? []
         return configured.isEmpty ? controller.payload?.codexParentModel ?? "" : configured.joined(separator: ", ")
     }
     private func applyCodexCompatibility() {
-        guard harness == .codex else { return }
+        guard harness == .codex, !isMain else { route.alias = nil; route.requiredMultiAgentVersion = nil; return }
         route.requiredMultiAgentVersion = codexUsesV2 ? nil : "v1"
         if !codexUsesV2 && parentModels.isEmpty { parentModels = configuredParentModel() }
+    }
+    private func selectExistingMainRoute() -> Bool {
+        guard isMain, selection == nil, let existing = items.first(where: { $0.harness == harness && $0.isMain }) else { return false }
+        selection = existing.id
+        load(existing.id)
+        return true
     }
     private func optional(_ binding: Binding<String?>) -> Binding<String> { Binding(get: { binding.wrappedValue ?? "" }, set: { binding.wrappedValue = $0.isEmpty ? nil : $0 }) }
     private func auth(_ path: WritableKeyPath<AuthorizationReference, String>) -> Binding<String> { Binding(get: { route.authorization?[keyPath: path] ?? "" }, set: { if route.authorization == nil { route.authorization = AuthorizationReference() }; route.authorization?[keyPath: path] = $0; if route.authorization?.env.isEmpty == true { route.authorization = nil } }) }

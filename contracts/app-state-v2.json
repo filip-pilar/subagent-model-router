@@ -70,6 +70,18 @@
         }
       }
     },
+    "mainRoutes": {
+      "claude": {
+        "enabled": true,
+        "model": "claude-main-routed",
+        "destination": "example-provider"
+      },
+      "codex": {
+        "enabled": false,
+        "model": "codex-main-routed",
+        "destination": "example-provider"
+      }
+    },
     "preserved": {
       "customCodexAgents": {
         "/tmp/contract-home/.codex/agents/explorer.toml": {

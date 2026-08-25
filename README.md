@@ -1,8 +1,8 @@
 # Subagent Model Router
 
-Subagent Model Router is a native Apple Silicon menu-bar app and localhost gateway for routing Claude Code and Codex subagents to different protocol-compatible models and endpoints.
+Route Codex and Claude Code main agents and subagents to different models and providers.
 
-Parent requests, unknown agents, disabled routes, and routes without a usable destination pass through to their original model and upstream. The router does not translate protocols: Claude routes require an Anthropic Messages-compatible endpoint, while Codex routes require an OpenAI Responses-compatible endpoint.
+Subagent Model Router is a native Apple Silicon menu-bar app and localhost gateway. Main-agent routes are optional and configured independently for Claude Code and Codex. An absent, disabled, or broken main route passes parent requests through to their original model and upstream. Claude identifies child traffic explicitly, so unknown Claude subagents pass through unchanged. Codex can distinguish only subagents carrying router-owned hidden model aliases; other Codex traffic follows the main route as described below. Disabled or broken explicit subagent routes retain their existing fallback behavior. The router does not translate protocols: Claude routes require an Anthropic Messages-compatible endpoint, while Codex routes require an OpenAI Responses-compatible endpoint.
 
 ## macOS app
 
@@ -24,7 +24,7 @@ open "dist/Subagent Model Router.app"
 Then:
 
 1. Add a destination.
-2. Add a route for a detected or manually entered global agent type.
+2. Add a route for the main agent or a detected or manually entered global subagent type.
 3. Test the destination if desired.
 4. Click **Set Up Routing** for Claude Code, Codex, or both.
 
@@ -34,7 +34,7 @@ The app owns the gateway on fixed loopback address `127.0.0.1:9476`. Its state a
 
 ## Supported routing
 
-Claude routes use hook-provided child identity. Codex uses V1 for stock and dynamic agents and V2 for valid explicit-model global custom agents. Unsupported Codex combinations are blocked instead of silently inheriting the parent model. Discovery is limited to built-in and global user-defined agents.
+Claude main routes apply only when no child identity is present; identified children continue through their named route or normal pass-through behavior. Codex resolves hidden child aliases before its optional main route. Every request whose model is not a router-owned hidden alias uses the Codex main route when enabled, including an unconfigured subagent that inherits the parent model. Explicit aliased subagent routes retain precedence. Codex uses V1 for stock and dynamic subagents and V2 for valid explicit-model global custom agents. Unsupported configured combinations are blocked instead of silently inheriting the parent model. Discovery is limited to built-in and global user-defined subagents.
 
 The [user guide](docs/USING_THE_APP.md) is the source of truth for setup, compatibility, removal, and troubleshooting. [Architecture](docs/ARCHITECTURE.md) describes the internal request and lifecycle flows.
 
@@ -75,13 +75,25 @@ The app and CLI share `~/.local/share/subagent-model-router/config.json`. The ve
         "requiredMultiAgentVersion": "v1"
       }
     }
+  },
+  "mainRoutes": {
+    "claude": {
+      "enabled": true,
+      "model": "example-main-model",
+      "destination": "example-provider"
+    },
+    "codex": {
+      "enabled": false,
+      "model": "example-main-model",
+      "destination": "example-provider"
+    }
   }
 }
 ```
 
 Because `explorer` is a built-in dynamic agent, the complete configuration must also list at least one `harnesses.codex.parentModels` entry. The app fills that value from the configured Codex parent model when available.
 
-Version 1 inline-upstream configurations migrate automatically. A deleted destination may leave a visible broken route so the route can be repaired or removed later.
+Version 1 inline-upstream configurations migrate automatically. Existing version 2 configurations gain an empty `mainRoutes` section without changing behavior. A deleted destination may leave a visible broken route so the route can be repaired or removed later.
 
 Installations created as Harness Model Router migrate automatically on first launch. The app moves the legacy data directory, rewrites its owned Claude and Codex hooks and provider block, preserves restoration state, and removes the superseded helper after migration.
 
@@ -108,6 +120,8 @@ node dist/cli.js routes --json
 node dist/cli.js status --json
 node dist/cli.js start
 ```
+
+The CLI exposes main routes separately from named subagent routes: `main-route set`, `main-route enable`, `main-route disable`, and `main-route remove`.
 
 Run `node dist/cli.js --help` for setup, removal, route, catalog, and lifecycle commands. Discovery is global-only and includes built-in and user-defined agents.
 

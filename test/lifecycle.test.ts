@@ -117,6 +117,9 @@ describe("installation lifecycle", () => {
     const { config, path } = await testConfig(root);
     config.harnesses.claude.enabled = true;
     config.harnesses.codex.enabled = true;
+    config.destinations.main = { name: "Main", anthropicBaseUrl: "http://main.example/anthropic", openaiBaseUrl: "http://main.example/v1" };
+    config.mainRoutes.claude = { enabled: true, model: "claude-main-wire", destination: "main" };
+    config.mainRoutes.codex = { enabled: true, model: "codex-main-wire", destination: "main" };
     config.routes.codex.reviewer = { enabled: true, alias: "router-reviewer", model: "wire-review", upstream: { baseUrl: "http://custom.example/v1", protocol: "openai-responses" } };
     await saveConfig(path, config);
 
@@ -135,6 +138,7 @@ describe("installation lifecycle", () => {
     expect(installedConfig).toContain("[model_providers.subagent-model-router]");
     expect((parseToml(installedConfig) as any).model_providers["subagent-model-router"]).toMatchObject({ env_key: "PRIVATE_API_KEY", request_max_retries: 7 });
     const installedRouterConfig = await loadConfig(path);
+    expect(installedRouterConfig.mainRoutes).toMatchObject({ claude: { model: "claude-main-wire" }, codex: { model: "codex-main-wire" } });
     expect(installedRouterConfig.routes.codex.reviewer.requiredMultiAgentVersion).toBeUndefined();
     const overlay = JSON.parse(await readFile(installedRouterConfig.harnesses.codex.overlayCatalogPath!, "utf8"));
     expect(overlay.models.find((model: any) => model.slug === "router-reviewer")).toMatchObject({ visibility: "hide", multi_agent_version: "v2" });
@@ -149,6 +153,7 @@ describe("installation lifecycle", () => {
     expect(restoredConfig).toContain('model_provider = "private"');
     expect(restoredConfig).toContain('unrelated = "keep"');
     expect(restoredConfig).not.toContain("subagent-model-router:start");
+    expect((await loadConfig(path)).mainRoutes).toMatchObject({ claude: { model: "claude-main-wire" }, codex: { model: "codex-main-wire" } });
   });
 
   it.each([
