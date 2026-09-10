@@ -10,6 +10,11 @@ import { installIntegration } from "../src/lifecycle.js";
 import { captureServer, close, temporaryRoot, type CaptureResponse } from "./helpers.js";
 
 const live = (process.env.SMR_LIVE_CLAUDE ?? process.env.HMR_LIVE_CLAUDE) === "1" && hasClaude();
+// A second opt-in points only the child route at a real loopback provider.
+// Parent replies remain fixtures, so this verifies hooks and child inference
+// without requiring or consuming an Anthropic subscription.
+const liveChildBase = process.env.SMR_LIVE_CLAUDE_UPSTREAM_URL;
+const liveChildModel = process.env.SMR_LIVE_CLAUDE_MODEL;
 const servers: Server[] = [];
 afterEach(async () => { while (servers.length) await close(servers.pop()!); });
 
@@ -23,7 +28,14 @@ describe("live Claude Code integration", () => {
     await mkdir(project, { recursive: true });
     const nonce = `SMR_${randomUUID().replaceAll("-", "")}`;
     const parentModel = "claude-sonnet-4-6";
-    const childModel = "independent-claude-wire";
+    if (liveChildBase) {
+      const url = new URL(liveChildBase);
+      expect(url.protocol).toBe("http:");
+      expect(url.hostname).toBe("127.0.0.1");
+      expect(url.username || url.password).toBe("");
+      expect(liveChildModel).toBeTruthy();
+    }
+    const childModel = liveChildBase ? liveChildModel! : "independent-claude-wire";
 
     const original = await captureServer((capture) => {
       const messages = Array.isArray(capture.body.messages) ? capture.body.messages : [];
@@ -51,10 +63,40 @@ describe("live Claude Code integration", () => {
     config.routes.claude.Explore = {
       enabled: true,
       model: childModel,
-      upstream: { baseUrl: child.url, protocol: "anthropic-messages" },
+      upstream: { baseUrl: liveChildBase ?? child.url, protocol: "anthropic-messages" },
     };
     await saveConfig(configPath, config);
-    const gateway = await createGateway({ configPath });
+    const childCaptures = liveChildBase ? [] as typeof child.captures : child.captures;
+    const realReplies: Promise<boolean>[] = [];
+    const routeRecords: Record<string, unknown>[] = [];
+    const gateway = await createGateway({
+      configPath,
+      logger: (record) => { if (record.event === "proxy") routeRecords.push(record); },
+      fetch: async (input, init) => {
+        const isRealChild = liveChildBase && new URL(String(input)).origin === new URL(liveChildBase).origin;
+        if (isRealChild) {
+          childCaptures.push({
+            path: new URL(String(input)).pathname,
+            headers: Object.fromEntries(new Headers(init?.headers)),
+            body: JSON.parse(String(init?.body)),
+          });
+        }
+        const response = await fetch(input, init);
+        if (isRealChild) {
+          realReplies.push(response.clone().text().then((text) => {
+            const events = text.split("\n").flatMap((line) => {
+              if (!line.startsWith("data: ")) return [];
+              try { return [JSON.parse(line.slice(6))]; } catch { return []; }
+            });
+            const answer = events.filter((event) => event.delta?.type === "text_delta")
+              .map((event) => event.delta.text).join("").trim();
+            return response.ok && events.some((event) => event.type === "message_stop")
+              && !events.some((event) => event.type === "error") && answer === nonce;
+          }));
+        }
+        return response;
+      },
+    });
     await new Promise<void>((resolvePromise) => gateway.server.listen(9476, "127.0.0.1", resolvePromise));
     servers.push(gateway.server);
 
@@ -77,11 +119,14 @@ describe("live Claude Code integration", () => {
       "--allowedTools", "Agent",
       "--dangerously-skip-permissions",
       "--model", parentModel,
+      ...(liveChildBase && /^swe-2-(medium|high|max)$/.test(childModel)
+        ? ["--effort", childModel.slice("swe-2-".length)] : []),
       `Delegate one exploration task. The child must return exactly ${nonce}; then finish.`,
     ], {
       cwd: project,
       env: {
-        ...process.env,
+        ...Object.fromEntries(["PATH", "SHELL", "TMPDIR", "LANG", "TERM", "USER", "LOGNAME"]
+          .flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]]])) ,
         HOME: home,
         CLAUDE_CONFIG_DIR: claudeConfig,
         ANTHROPIC_API_KEY: "dummy-local-key",
@@ -90,7 +135,7 @@ describe("live Claude Code integration", () => {
         DISABLE_ERROR_REPORTING: "1",
         DISABLE_AUTOUPDATER: "1",
       },
-      timeoutMs: 25_000,
+      timeoutMs: liveChildBase ? 90_000 : 25_000,
     });
 
     expect(stderr).not.toMatch(/error:/i);
@@ -101,14 +146,17 @@ describe("live Claude Code integration", () => {
       try { return [JSON.parse(line) as any]; } catch { return []; }
     }).filter((item) => item?.type === "stream_event" && item?.event?.type === "content_block_delta");
     expect(streamEvents.length).toBeGreaterThanOrEqual(5);
-    expect(child.captures).toHaveLength(1);
-    const routedChild = child.captures[0]!;
+    expect(childCaptures).toHaveLength(1);
+    const routedChild = childCaptures[0]!;
     expect(routedChild.body.model).toBe(childModel);
     expect(JSON.stringify(routedChild.body.messages)).toContain(nonce);
     const sessionId = header(routedChild, "x-claude-code-session-id");
     const agentId = header(routedChild, "x-claude-code-agent-id");
     expect(sessionId).toBeTruthy();
     expect(agentId).toBeTruthy();
+    if (liveChildBase) expect(await Promise.all(realReplies)).toEqual([true]);
+    expect(routeRecords.some((record) => record.routed === true && record.agentType === "Explore"
+      && record.model === childModel)).toBe(true);
     expect(original.captures.length).toBeGreaterThanOrEqual(2);
     expect(original.captures.every((capture) => capture.body.model === parentModel)).toBe(true);
     expect(original.captures.every((capture) => !header(capture, "x-claude-code-agent-id"))).toBe(true);
@@ -127,10 +175,10 @@ describe("live Claude Code integration", () => {
     });
     expect(replay.ok).toBe(true);
     await replay.text();
-    expect(child.captures).toHaveLength(1);
+    expect(childCaptures).toHaveLength(1);
     expect(original.captures.at(-1)?.body.model).toBe(parentModel);
     expect(header(original.captures.at(-1)!, "x-claude-code-agent-id")).toBe(agentId);
-  }, 30_000);
+  }, liveChildBase ? 100_000 : 30_000);
 });
 
 function anthropicTool(model: string, name: string, input: unknown): CaptureResponse {

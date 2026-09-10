@@ -146,3 +146,37 @@ npm run test:live-codex
 ```
 
 Hook and configuration schemas were checked against the official [Codex hooks documentation](https://developers.openai.com/codex/hooks), [Codex subagents documentation](https://developers.openai.com/codex/subagents), [Claude Code hooks reference](https://code.claude.com/docs/en/hooks), and [Claude Code environment variables](https://code.claude.com/docs/en/env-vars).
+
+## SWE-2 through llm-local-gateway
+
+Add a destination with Anthropic base URL `http://127.0.0.1:4317/claude` and
+optionally OpenAI base URL `http://127.0.0.1:4317/openai/v1`. **Test Anthropic**
+discovers the gateway's models; model discovery alone does not verify inference.
+For a selected Claude subagent such as `Explore`, choose `swe-2-medium`,
+`swe-2-high`, or `swe-2-max`. Leave the Claude main route absent to preserve the
+parent's original upstream. The gateway must be running and authenticated with
+a Devin account entitled to SWE-2.
+
+The router already supports arbitrary destination model IDs, so SWE-2 requires
+no model registry or protocol changes here. It forwards reasoning options
+unchanged: when a child sends an explicit effort, it must match the selected
+SWE-2 variant. The gateway rejects conflicting effort, disabled thinking, and
+explicit thinking budgets instead of silently changing the model. The gateway's
+isolated `claude-swe2.mjs` launcher omits normal router hooks; use normal Claude
+with **Set Up Routing** for selected-subagent routing.
+
+A bounded opt-in check uses the actual Claude CLI and router hooks, a scripted
+parent, and a real SWE-2 child. It keeps temporary-home isolation and does not
+change everyday settings. With the updated gateway already running and the
+router helper built (`npm run build`):
+
+```sh
+SMR_LIVE_CLAUDE_UPSTREAM_URL=http://127.0.0.1:4317/claude \
+SMR_LIVE_CLAUDE_MODEL=swe-2-medium \
+npm run test:live-claude
+```
+
+This consumes Devin quota. It verifies the child's streamed response, the
+`Explore` routing decision, parent pass-through, and hook cleanup. The gateway's
+SWE-2 live verifier additionally checks Devin's returned model metadata; the
+model name sent or echoed by the router is not upstream inference evidence.
