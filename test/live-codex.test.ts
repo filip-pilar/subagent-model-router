@@ -9,7 +9,8 @@ import { defaultConfig, saveConfig } from "../src/config.js";
 import { installIntegration } from "../src/lifecycle.js";
 import { captureServer, close, temporaryRoot, writeJson, type Capture } from "./helpers.js";
 
-const live = (process.env.SMR_LIVE_CODEX ?? process.env.HMR_LIVE_CODEX) === "1" && hasCodex();
+const live = (process.env.SMR_LIVE_CODEX ?? process.env.HMR_LIVE_CODEX) === "1";
+if (live && !hasCodex()) throw new Error("Codex CLI is required for the requested integration check");
 const servers: Server[] = [];
 afterEach(async () => { while (servers.length) await close(servers.pop()!); });
 

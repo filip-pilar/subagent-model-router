@@ -9,7 +9,8 @@ import { createGateway } from "../src/gateway.js";
 import { installIntegration } from "../src/lifecycle.js";
 import { captureServer, close, temporaryRoot, type CaptureResponse } from "./helpers.js";
 
-const live = (process.env.SMR_LIVE_CLAUDE ?? process.env.HMR_LIVE_CLAUDE) === "1" && hasClaude();
+const live = (process.env.SMR_LIVE_CLAUDE ?? process.env.HMR_LIVE_CLAUDE) === "1";
+if (live && !hasClaude()) throw new Error("Claude CLI is required for the requested integration check");
 // A second opt-in points only the child route at a real loopback provider.
 // Parent replies remain fixtures, so this verifies hooks and child inference
 // without requiring or consuming an Anthropic subscription.

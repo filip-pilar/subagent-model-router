@@ -129,7 +129,13 @@ Environment variables use the `SMR_` prefix. The previous `HMR_` names remain ac
 
 ## Development and verification
 
-Run deterministic TypeScript, packaging, and native checks:
+`npm run check` runs version checks, lint, type checking, deterministic tests
+(including standalone-helper packaging), and the TypeScript build. `npm test`
+excludes `test/live-*.test.ts` even when live flags remain in the environment.
+Run a focused file with `npm test -- test/core.test.ts`.
+
+Run native tests for Swift or helper/app contract changes, and the full app
+build and signature verification for macOS packaging changes:
 
 ```sh
 npm run check
@@ -138,10 +144,14 @@ npm run build:macos
 codesign --verify --deep --strict --verbose=2 "dist/Subagent Model Router.app"
 ```
 
-Optional live CLI checks use temporary homes and do not modify real Claude or Codex configuration:
+Optional CLI checks build the current helper first, use temporary homes, and
+fail if the requested CLI is unavailable. They do not modify real Claude or
+Codex configuration. By default, both use scripted loopback responses without
+provider inference. For the Claude fixture check, clear any inherited real-child
+destination; the real-provider variant is documented below:
 
 ```sh
-npm run test:live-claude
+env -u SMR_LIVE_CLAUDE_UPSTREAM_URL -u SMR_LIVE_CLAUDE_MODEL npm run test:live-claude
 npm run test:live-codex
 ```
 
@@ -168,7 +178,7 @@ with **Set Up Routing** for selected-subagent routing.
 A bounded opt-in check uses the actual Claude CLI and router hooks, a scripted
 parent, and a real SWE-2 child. It keeps temporary-home isolation and does not
 change everyday settings. With the updated gateway already running and the
-router helper built (`npm run build`):
+router source ready (the command builds its helper):
 
 ```sh
 SMR_LIVE_CLAUDE_UPSTREAM_URL=http://127.0.0.1:4317/claude \
