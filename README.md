@@ -1,8 +1,24 @@
 # Subagent Model Router
 
-Route Codex and Claude Code main agents and subagents to different models and providers.
+Route Codex and Claude Code main agents and subagents to different models and
+providers from a native Apple Silicon menu-bar app.
 
-Subagent Model Router is a native Apple Silicon menu-bar app and localhost gateway. Main-agent routes are optional and configured independently for Claude Code and Codex. An absent, disabled, or broken main route passes parent requests through to their original model and upstream. Claude identifies child traffic explicitly, so unknown Claude subagents pass through unchanged. Codex can distinguish only subagents carrying router-owned hidden model aliases; other Codex traffic follows the main route as described below. Disabled or broken explicit subagent routes retain their existing fallback behavior. The router does not translate protocols: Claude routes require an Anthropic Messages-compatible endpoint, while Codex routes require an OpenAI Responses-compatible endpoint.
+For example, keep Claude Code's main agent on its usual model while sending
+only its `Explore` subagent to SWE-2 through LLM Local Gateway:
+
+```text
+Claude Code main agent ──> original model and provider
+           Explore     ──> Subagent Model Router ──> LLM Local Gateway ──> SWE-2
+```
+
+Leave the Claude main route unset, add an `Explore` route to
+`http://127.0.0.1:4317/claude`, and choose `swe-2-medium`. This requires a
+running gateway and a Devin account entitled to SWE-2.
+[Complete example and effort limits](#swe-2-through-llm-local-gateway).
+
+Main-agent routing is optional. The router does not translate protocols:
+Claude routes need Anthropic Messages; Codex routes need OpenAI Responses.
+Codex child identification has additional [compatibility limits](#supported-routing).
 
 ## macOS app
 
@@ -16,6 +32,8 @@ Requirements:
 Build and open the ad-hoc-signed app:
 
 ```sh
+git clone https://github.com/filip-pilar/subagent-model-router.git
+cd subagent-model-router
 npm ci
 npm run build:macos
 open "dist/Subagent Model Router.app"
@@ -32,11 +50,60 @@ The app never installs Claude Code or Codex. Harness configuration changes only 
 
 The app owns the gateway on fixed loopback address `127.0.0.1:9476`. Its state and helper live under `~/.local/share/subagent-model-router/`.
 
+## Which repo should I use?
+
+| I want to… | Repo |
+| --- | --- |
+| Switch ChatGPT accounts behind a stable endpoint for Codex CLI | [codex-account-gateway](https://github.com/filip-pilar/codex-account-gateway) |
+| Choose Codex accounts and external models from one experimental Mac app | [codex-switchboard](https://github.com/filip-pilar/codex-switchboard) |
+| Expose Devin/Grok CLI access through local OpenAI- and Anthropic-compatible APIs | [llm-local-gateway](https://github.com/filip-pilar/llm-local-gateway) |
+| Assign different models to main agents and named subagents in Codex or Claude Code | [subagent-model-router](https://github.com/filip-pilar/subagent-model-router) |
+
+These are separate tools. Switchboard bundles its own gateway; it does not
+require the other apps. Subagent Model Router can use LLM Local Gateway as a
+destination.
+
 ## Supported routing
+
+Main-agent routes are optional and configured independently for Claude Code and Codex. An absent, disabled, or broken main route passes parent requests through to their original model and upstream. Claude identifies child traffic explicitly, so unknown Claude subagents pass through unchanged. Codex can distinguish only subagents carrying router-owned hidden model aliases; other Codex traffic follows the main route as described below. Disabled or broken explicit subagent routes retain their existing fallback behavior. The router does not translate protocols: Claude routes require an Anthropic Messages-compatible endpoint, while Codex routes require an OpenAI Responses-compatible endpoint.
 
 Claude main routes apply only when no child identity is present; identified children continue through their named route or normal pass-through behavior. Codex resolves hidden child aliases before its optional main route. Every request whose model is not a router-owned hidden alias uses the Codex main route when enabled, including an unconfigured subagent that inherits the parent model. Explicit aliased subagent routes retain precedence. Codex uses V1 for stock and dynamic subagents and V2 for valid explicit-model global custom agents. Unsupported configured combinations are blocked instead of silently inheriting the parent model. Discovery is limited to built-in and global user-defined subagents.
 
 The [user guide](docs/USING_THE_APP.md) is the source of truth for setup, compatibility, removal, and troubleshooting. [Architecture](docs/ARCHITECTURE.md) describes the internal request and lifecycle flows.
+
+## SWE-2 through llm-local-gateway
+
+Add a destination with Anthropic base URL `http://127.0.0.1:4317/claude` and
+optionally OpenAI base URL `http://127.0.0.1:4317/openai/v1`. **Test Anthropic**
+discovers the gateway's models; model discovery alone does not verify inference.
+For a selected Claude subagent such as `Explore`, choose `swe-2-medium`,
+`swe-2-high`, or `swe-2-max`. Leave the Claude main route absent to preserve the
+parent's original upstream. The gateway must be running and authenticated with
+a Devin account entitled to SWE-2.
+
+The router already supports arbitrary destination model IDs, so SWE-2 requires
+no model registry or protocol changes here. It forwards reasoning options
+unchanged: when a child sends an explicit effort, it must match the selected
+SWE-2 variant. The gateway rejects conflicting effort, disabled thinking, and
+explicit thinking budgets instead of silently changing the model. The gateway's
+isolated `claude-swe2.mjs` launcher omits normal router hooks; use normal Claude
+with **Set Up Routing** for selected-subagent routing.
+
+A bounded opt-in check uses the actual Claude CLI and router hooks, a scripted
+parent, and a real SWE-2 child. It keeps temporary-home isolation and does not
+change everyday settings. With the updated gateway already running and the
+router source ready (the command builds its helper):
+
+```sh
+SMR_LIVE_CLAUDE_UPSTREAM_URL=http://127.0.0.1:4317/claude \
+SMR_LIVE_CLAUDE_MODEL=swe-2-medium \
+npm run test:live-claude
+```
+
+This consumes Devin quota. It verifies the child's streamed response, the
+`Explore` routing decision, parent pass-through, and hook cleanup. The gateway's
+SWE-2 live verifier additionally checks Devin's returned model metadata; the
+model name sent or echoed by the router is not upstream inference evidence.
 
 ## Configuration and CLI
 
@@ -156,37 +223,3 @@ npm run test:live-codex
 ```
 
 Hook and configuration schemas were checked against the official [Codex hooks documentation](https://developers.openai.com/codex/hooks), [Codex subagents documentation](https://developers.openai.com/codex/subagents), [Claude Code hooks reference](https://code.claude.com/docs/en/hooks), and [Claude Code environment variables](https://code.claude.com/docs/en/env-vars).
-
-## SWE-2 through llm-local-gateway
-
-Add a destination with Anthropic base URL `http://127.0.0.1:4317/claude` and
-optionally OpenAI base URL `http://127.0.0.1:4317/openai/v1`. **Test Anthropic**
-discovers the gateway's models; model discovery alone does not verify inference.
-For a selected Claude subagent such as `Explore`, choose `swe-2-medium`,
-`swe-2-high`, or `swe-2-max`. Leave the Claude main route absent to preserve the
-parent's original upstream. The gateway must be running and authenticated with
-a Devin account entitled to SWE-2.
-
-The router already supports arbitrary destination model IDs, so SWE-2 requires
-no model registry or protocol changes here. It forwards reasoning options
-unchanged: when a child sends an explicit effort, it must match the selected
-SWE-2 variant. The gateway rejects conflicting effort, disabled thinking, and
-explicit thinking budgets instead of silently changing the model. The gateway's
-isolated `claude-swe2.mjs` launcher omits normal router hooks; use normal Claude
-with **Set Up Routing** for selected-subagent routing.
-
-A bounded opt-in check uses the actual Claude CLI and router hooks, a scripted
-parent, and a real SWE-2 child. It keeps temporary-home isolation and does not
-change everyday settings. With the updated gateway already running and the
-router source ready (the command builds its helper):
-
-```sh
-SMR_LIVE_CLAUDE_UPSTREAM_URL=http://127.0.0.1:4317/claude \
-SMR_LIVE_CLAUDE_MODEL=swe-2-medium \
-npm run test:live-claude
-```
-
-This consumes Devin quota. It verifies the child's streamed response, the
-`Explore` routing decision, parent pass-through, and hook cleanup. The gateway's
-SWE-2 live verifier additionally checks Devin's returned model metadata; the
-model name sent or echoed by the router is not upstream inference evidence.
